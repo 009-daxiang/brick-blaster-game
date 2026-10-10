@@ -61,3 +61,11 @@
 
 - `index.html` —— 电脑版（直接双击打开）
 - `mobile.html` —— 手机优化版（触屏增量拖动 + 刘海屏安全区）
+
+
+## 素材来源与授权
+
+- 背景图：space-backdrop（CC0）— opengameart.org
+- 音效：The Essential Retro Video Game Sound Effects Collection 512 sounds（CC0, Juhani Junkala）、63 Digital Sound Effects（CC0, p0ss）— opengameart.org
+- BGM：yewamb（CC-BY 4.0）— opengameart.org
+- 以上素材已打包进 `assets/` 目录，无外部 CDN 依赖

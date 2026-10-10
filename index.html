@@ -279,7 +279,7 @@ function mulberry32(a) {
 function genLevel(n) {
   return {
     len: Math.min(24 + Math.round(n * 2), 90),            // 更长的蛇
-    hpBase: 1 + Math.floor((n - 1) / 22),                  // 基础血量 1→5
+    hpBase: 1 + Math.floor(n / 10),                        // 基础血量 1→11
     descendSpeed: Math.min(8 + n * 0.06, 14)               // 整体下压速度
   };
 }
@@ -321,17 +321,33 @@ function buildSnake() {
   bricks = [];
   descent = 0;
   swayPhase = rnd() * TAU;
-  head = { x: W / 2, y: TOP - 30, ang: -Math.PI / 2 };
-  // 蛇身从蛇头向屏幕上方延伸（画面外），随下压逐渐进入视野
+  const rowStep = BRICK_H + GAP;
+  const y0 = TOP + 40;
+  // 开局整条蛇以蛇形折行盘踞在场地内（全部可见），蛇头在一端
+  const dir0 = rnd() < 0.5 ? 1 : -1;
+  // 蛇头初始位置与摆动路径起点重合，避免开局跳变
+  const cx0 = W / 2 + Math.sin(swayPhase) * playW * 0.16;
+  head = {
+    x: Math.max(offX + 26, Math.min(offX + playW - 26,
+      cx0 + Math.sin(swayPhase) * Math.min(150, playW * 0.2))),
+    y: y0, ang: dir0 > 0 ? 0 : Math.PI
+  };
+  let px = head.x, py = y0, d = -dir0, vdir = -1;
+  const coilBottom = Math.min(TOP + 330, gunnerY - 130);
   for (let i = 0; i < n; i++) {
-    const hp = Math.max(1, Math.min(30, levelData.hpBase + Math.floor(i / 14) + (rnd() < 0.25 ? 1 : 0)));
-    bricks.push({
-      x: head.x, y: head.y - i * SEG_SPACING,
-      ang: -Math.PI / 2, hp, maxHp: hp, flash: 0, punch: 0, cd: 0
-    });
+    const hp = Math.max(1, Math.min(30, levelData.hpBase + Math.floor(i / 8) + (rnd() < 0.25 ? 1 : 0)));
+    bricks.push({ x: px, y: py, ang: dir0 > 0 ? 0 : Math.PI, hp, maxHp: hp, flash: 0, punch: 0, cd: 0 });
+    px += d * SEG_SPACING;
+    if (px < offX + 22 || px > offX + playW - 22) {
+      px = Math.max(offX + 22, Math.min(offX + playW - 22, px));
+      d = -d;
+      py += vdir * rowStep;
+      if (py < TOP + 24) { py = TOP + 24; vdir = 1; }
+      if (py > coilBottom) { py = coilBottom; vdir = -1; }
+    }
   }
   // 初始压境余量
-  initialGap = Math.max(1, gunnerY - head.y);
+  initialGap = Math.max(1, gunnerY - lowestBottom());
   minGap = initialGap;
 }
 function lowestBottom() {
@@ -639,7 +655,7 @@ function update(rdt) {
     descent += levelData.descendSpeed * dt;
     const cx = W / 2 + Math.sin(descent * 0.004 + swayPhase) * playW * 0.16;
     const nx = cx + Math.sin(descent * 0.016 + swayPhase) * Math.min(150, playW * 0.2);
-    const ny = TOP - 30 + descent;
+    const ny = TOP + 40 + descent;
     head.ang = Math.atan2(ny - head.y, nx - head.x);
     head.x = nx; head.y = ny;
     for (let i = 0; i < bricks.length; i++) {
@@ -654,10 +670,10 @@ function update(rdt) {
       s.ang = Math.atan2(dy, dx);
       s.cd = Math.max(0, s.cd - dt);
     }
-    // 蛇头压到枪手位置 = 失败
-    if (state === S_PLAY && head.y + BRICK_H / 2 >= gunnerY - 16) doFail();
+    // 蛇身任何一部分压到枪手位置 = 失败
+    if (state === S_PLAY && lowestBottom() >= gunnerY - 12) doFail();
     // 星级：跟踪最小安全距离
-    minGap = Math.min(minGap, Math.max(0, gunnerY - head.y));
+    minGap = Math.min(minGap, Math.max(0, gunnerY - lowestBottom()));
   }
 
   // 枪手
@@ -824,7 +840,7 @@ function drawRails() {
 /* 压境进度条：右缘竖条，蛇越近越红 */
 function drawDangerGauge() {
   if (state === S_MENU) return;
-  const ratio = Math.max(0, Math.min(1, (gunnerY - head.y) / Math.max(initialGap, 1)));
+  const ratio = Math.max(0, Math.min(1, (gunnerY - lowestBottom()) / Math.max(initialGap, 1)));
   const x = offX + playW + 14, h = H - 120, y0 = 60;
   ctx.fillStyle = 'rgba(255,255,255,0.08)';
   roundRect(x, y0, 6, h, 3); ctx.fill();
@@ -1195,15 +1211,24 @@ function applyUpgrade(i) {
 
 /* ---------- 主循环 ---------- */
 let lastT = performance.now();
-function frame(now) {
-  requestAnimationFrame(frame);
+let lastRaF = performance.now();
+function tickFrame(now) {
   let rdt = (now - lastT) / 1000;
   lastT = now;
   rdt = Math.min(rdt, 0.05);
   if (!paused) update(rdt);
   render();
 }
+function frame(now) {
+  lastRaF = now;
+  tickFrame(now);
+  requestAnimationFrame(frame);
+}
 requestAnimationFrame(frame);
+// 遮挡冻结兜底：rAF 停摆超 120ms 时由定时器接管驱动
+setInterval(() => {
+  if (performance.now() - lastRaF > 120) tickFrame(performance.now());
+}, 40);
 
 /* ---------- UI ---------- */
 const OVS = ['menuOv', 'levelsOv', 'clearOv', 'overOv', 'pauseOv', 'upgradeOv'];

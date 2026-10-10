@@ -43,6 +43,14 @@
   .lvBtn.locked { opacity:.28; cursor:not-allowed; }
   #recordBadge { display:inline-block; background:linear-gradient(90deg,#ffd43b,#ff922b); color:#5c3c00;
     font-size:.75rem; font-weight:800; padding:3px 12px; border-radius:999px; letter-spacing:.1em; }
+  #upgradeCards { display:flex; flex-direction:column; gap:12px; width:min(400px, 88vw); }
+  .upCard { position:relative; text-align:left; border:3px solid #4dabf7; background:rgba(20,24,50,.92);
+    border-radius:14px; padding:12px 16px 12px 54px; box-shadow:0 6px 18px rgba(0,0,0,.4); }
+  .upCard b { display:block; font-size:1.05rem; color:#fff; }
+  .upCard i { display:block; font-style:normal; font-size:.8rem; color:rgba(255,255,255,.65); margin-top:2px; }
+  .upCard .tier { position:absolute; left:14px; top:50%; transform:translateY(-50%);
+    width:26px; height:26px; border-radius:8px; display:flex; align-items:center; justify-content:center;
+    font-weight:900; color:#fff; font-size:.9rem; }
 </style>
 </head>
 <body>
@@ -81,6 +89,12 @@
     <button id="btnRetry">再来一次</button>
     <button id="btnToLevels2" class="ghost">选关</button>
   </div>
+</div>
+
+<div id="upgradeOv" class="overlay hidden">
+  <h2>✦ 选择强化 ✦</h2>
+  <div id="upgradeCards"></div>
+  <p class="hint">战场暂停中 · 选一张强化你的火力</p>
 </div>
 
 <div id="pauseOv" class="overlay hidden">
@@ -235,11 +249,16 @@ let gunnerX = 0, gunnerTarget = 0, muzzleT = 0, walkT = 0;
 let firing = false, fireCd = 0;
 // 炫彩子弹技能
 let spreadT = 0, fireT = 0, pierceT = 0, homingT = 0, rapidT = 0, rainbowT = 0;
+let bulletSpeedMul = 1;
 let keys = { left: false, right: false };
 let minGap = 0, initialGap = 1;
+// 三选一强化（参考打了个龙）：属性 + 副武器
+let upgradeOpen = false, upgradeCards = [];
+let dmgMul = 1, rateMul = 1, extraBullets = 0, critChance = 0, pierceExtra = 0, thunderWeapon = false;
+let totalHp0 = 1;
 
-function baseSpeed() { return 820; }
-function fireInterval() { return rapidT > 0 ? 0.075 : 0.17; }
+function baseSpeed() { return 820 * bulletSpeedMul; }
+function fireInterval() { return (rapidT > 0 ? 0.075 : 0.17) / rateMul; }
 function bandTop() { return TOP + 24 + descent; }
 function bandBottom() { return TOP + 24 + Math.min(230, H * 0.32) + descent; }
 
@@ -283,7 +302,11 @@ function startLevel(n) {
   bullets = []; powerups = []; bolts = [];
   particles = []; popups = [];
   score = 0; shatterCount = 0; streak = 0; streakT = 0;
+  dmgMul = 1; rateMul = 1; extraBullets = 0; critChance = 0; pierceExtra = 0; thunderWeapon = false;
+  upgradeOpen = false; upgradeCards = [];
+  totalHp0 = Math.max(1, bricks.reduce((a, b) => a + b.hp, 0));
   spreadT = 0; fireT = 0; pierceT = 0; homingT = 0; rapidT = 0; rainbowT = 0;
+  bulletSpeedMul = 1;
   firing = false; fireCd = 0;
   slowmoT = 0; shake = 0; flash = 0; overT = 0;
   introT = 0;
@@ -382,6 +405,18 @@ function damageSegment(s, dmg, chain) {
   if (s.hp <= 0) return;
   s.hp -= dmg;
   s.flash = 1; s.punch = 1;
+  // 雷电之芽副武器：命中概率触发落雷
+  if (thunderWeapon && !chain && Math.random() < 0.3) {
+    const near = bricks
+      .filter(o => o !== s && o.hp > 0)
+      .map(o => ({ o, d: (o.x - s.x) ** 2 + (o.y - s.y) ** 2 }))
+      .sort((a, b) => a.d - b.d)[0];
+    if (near && near.d < 150 * 150) {
+      addBolt(s.x, s.y, near.o.x, near.o.y);
+      damageSegment(near.o, 1, true);
+      sfx.thunder();
+    }
+  }
   if (s.hp <= 0) {
     shatterSegment(s, chain);
   } else {
@@ -405,6 +440,7 @@ function shatterSegment(s, chain) {
   const i = bricks.indexOf(s);
   if (i >= 0) bricks.splice(i, 1);
   shatterCount++;
+  if (shatterCount % 10 === 0 && !upgradeOpen && state === S_PLAY) openUpgrade();
   if (shatterCount % 7 === 0 || Math.random() < 0.08) dropPowerup(s.x, s.y);
   if (bricks.length === 0 && state === S_PLAY) doClear();
 }
@@ -492,17 +528,21 @@ function spawnBullet(spreadIdx, total) {
   else if (homingT > 0) color = '#faa2c1';
   else if (rapidT > 0) color = '#4dabf7';
   if (hue !== null) color = 'hsl(' + hue + ',95%,65%)';
-  const dmg = rainbowT > 0 ? 1 + Math.floor(Math.random() * 3) : 1;
+  let dmg = rainbowT > 0 ? 1 + Math.floor(Math.random() * 3) : 1;
+  dmg = Math.max(1, Math.round(dmg * dmgMul));
+  let crit = false;
+  if (Math.random() < critChance) { dmg *= 2; crit = true; color = '#ffd43b'; }
   bullets.push({
     x: gunnerX + (total > 1 ? (spreadIdx - (total - 1) / 2) * 8 : 0),
     y: gunnerY - 40,
     vx: Math.sin(ang) * baseSpeed(),
     vy: -Math.cos(ang) * baseSpeed(),
-    dmg, color, hue
+    dmg, color, hue, crit,
+    pierce: 1 + pierceExtra + (pierceT > 0 ? 2 : 0)
   });
 }
 function fireOnce() {
-  const n = spreadT > 0 ? 3 : 1;
+  const n = (spreadT > 0 ? 3 : 1) + extraBullets;
   for (let i = 0; i < n; i++) spawnBullet(i, n);
   muzzleT = 0.06;
   sfx.shoot();
@@ -536,6 +576,7 @@ function bulletImpact(b) {
 
 /* ---------- 更新 ---------- */
 function update(rdt) {
+  if (upgradeOpen) return;   // 三选一强化时战场暂停
   if (slowmoT > 0) slowmoT -= rdt;
   timeScale += ((slowmoT > 0 ? 0.3 : 1) - timeScale) * Math.min(1, rdt * 10);
   const dt = rdt * timeScale;
@@ -622,13 +663,12 @@ function update(rdt) {
       if (b.y < -20) { dead = true; break; }
       for (let k = bricks.length - 1; k >= 0; k--) {
         const s = bricks[k];
-        const pierce = pierceT > 0;
-        if (pierce && s.cd > 0) continue;
+        if (s.cd > 0) continue;
         if (bulletHitSegment(b, s)) {
-          if (pierce) s.cd = 0.15;
+          if (b.pierce > 0) { b.pierce--; s.cd = 0.15; }
+          else dead = true;
           damageSegment(s, b.dmg, false);
           bulletImpact(b);
-          if (!pierce) dead = true;
           break;
         }
       }
@@ -714,6 +754,7 @@ function render() {
   drawGunner();
   drawPopups();
   drawHUD();
+  drawBossBar();
   ctx.globalAlpha = 1;
   ctx.restore();
   if (flash > 0.01) {
@@ -969,6 +1010,22 @@ function drawHUD() {
   ctx.fillText('第 ' + level + ' 关 · 蛇鳞 ×' + bricks.length, W / 2, 22);
   ctx.restore();
 }
+function drawBossBar() {
+  if (state === S_MENU || !bricks.length || !levelData) return;
+  const cur = bricks.reduce((a, b) => a + b.hp, 0);
+  const ratio = Math.max(0, Math.min(1, cur / Math.max(totalHp0, 1)));
+  const w = Math.min(340, playW * 0.66), x = W / 2 - w / 2, y = 36;
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  roundRect(x - 2, y - 2, w + 4, 13, 7); ctx.fill();
+  ctx.fillStyle = '#5c1717';
+  roundRect(x, y, w, 9, 4.5); ctx.fill();
+  ctx.fillStyle = '#e03131';
+  roundRect(x, y, w * ratio, 9, 4.5); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.font = '700 10px system-ui, "PingFang SC", sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('🐉 恶龙 · 第 ' + level + ' 章', W / 2, y + 4.5);
+}
 function roundRect(x, y, w, h, r) {
   r = Math.min(r, w / 2, h / 2);
   ctx.beginPath();
@@ -987,6 +1044,49 @@ function shade(hex, amt) {
   return 'rgb(' + r + ',' + g + ',' + b + ')';
 }
 
+/* ---------- 三选一强化（参考打了个龙） ---------- */
+const UPGRADES = [
+  { id: 'dmg',     name: '伤害强化', base: '子弹伤害 +50%',           apply: m => dmgMul += 0.5 * m },
+  { id: 'rate',    name: '射速强化', base: '射速 +25%',               apply: m => rateMul += 0.25 * m },
+  { id: 'multi',   name: '多重射击', base: '子弹数量 +1',             apply: m => extraBullets += (m >= 1.6 ? 2 : 1) },
+  { id: 'crit',    name: '暴击强化', base: '暴击率 +15%（双倍伤害）', apply: m => critChance = Math.min(0.8, critChance + 0.15 * m) },
+  { id: 'speed',   name: '弹速强化', base: '子弹速度 +30%',           apply: m => bulletSpeedMul += 0.3 * m },
+  { id: 'pierce',  name: '穿透强化', base: '子弹可多穿透 1 片',       apply: m => pierceExtra += 1 },
+  { id: 'thunder', name: '雷电之芽', base: '副武器：命中触发落雷',    apply: m => thunderWeapon = true }
+];
+const TIERS = [
+  { key: 'C', mult: 1,   color: '#9aa5b1' },
+  { key: 'B', mult: 1.6, color: '#4dabf7' },
+  { key: 'A', mult: 2.2, color: '#da77f2' }
+];
+function openUpgrade() {
+  upgradeOpen = true;
+  upgradeCards = [];
+  const pool = UPGRADES.slice();
+  const grid = document.getElementById('upgradeCards');
+  grid.innerHTML = '';
+  for (let i = 0; i < 3 && pool.length; i++) {
+    const u = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
+    const tr = TIERS[Math.random() < 0.6 ? 0 : Math.random() < 0.7 ? 1 : 2];
+    upgradeCards.push({ u, tr });
+    const btn = document.createElement('button');
+    btn.className = 'upCard';
+    btn.style.borderColor = tr.color;
+    btn.innerHTML = '<span class="tier" style="background:' + tr.color + '">' + tr.key + '</span>' +
+      '<b>' + u.name + '</b><i>' + u.base + (tr.mult > 1 ? ' ×' + tr.mult.toFixed(1) : '') + '</i>';
+    btn.addEventListener('click', () => applyUpgrade(i));
+    grid.appendChild(btn);
+  }
+  show('upgradeOv');
+}
+function applyUpgrade(i) {
+  const card = upgradeCards[i];
+  if (card) card.u.apply(card.tr.mult);
+  upgradeOpen = false;
+  hideAll();
+  sfx.pickup();
+}
+
 /* ---------- 主循环 ---------- */
 let lastT = performance.now();
 function frame(now) {
@@ -1000,7 +1100,7 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 /* ---------- UI ---------- */
-const OVS = ['menuOv', 'levelsOv', 'clearOv', 'overOv', 'pauseOv'];
+const OVS = ['menuOv', 'levelsOv', 'clearOv', 'overOv', 'pauseOv', 'upgradeOv'];
 function hideAll() { OVS.forEach(id => document.getElementById(id).classList.add('hidden')); }
 function show(id) { hideAll(); document.getElementById(id).classList.remove('hidden'); }
 function refreshMenu() {
@@ -1060,6 +1160,8 @@ window.__bb = {
   get gunnerX() { return gunnerX; },
   get snakeHead() { return { x: Math.round(head.x), y: Math.round(head.y) }; },
   get powerupCount() { return powerups.length; },
+  get stats() { return { dmgMul, rateMul, extraBullets, critChance, pierceExtra, thunderWeapon }; },
+  forceUpgrade: () => openUpgrade(),
   get descent() { return Math.round(descent); }
 };
 refreshMenu();

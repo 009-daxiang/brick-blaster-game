@@ -132,12 +132,12 @@ function resize() {
   W = window.innerWidth; H = window.innerHeight;
   canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
   canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
-  CELL = Math.min(W / 12, 46);
+  CELL = Math.min(W / 13, 38);
   playW = CELL * 12;
   offX = (W - playW) / 2;
-  BRICK_H = Math.round(CELL * 0.46);
+  BRICK_H = Math.round(CELL * 0.5);
   GAP = Math.max(3, Math.round(CELL * 0.07));
-  SEG_SPACING = Math.max(22, CELL * 0.9);
+  SEG_SPACING = Math.max(14, CELL * 0.62);
   TOP = Math.max(70, H * 0.1);
   gunnerY = H - 46;
   bgGrad = ctx.createLinearGradient(0, 0, 0, H);
@@ -278,9 +278,9 @@ function mulberry32(a) {
 }
 function genLevel(n) {
   return {
-    len: Math.min(28 + Math.round(n * 1.3), 80),          // 蛇更长，一行行盘下来
-    hpBase: 1 + Math.floor((n - 1) / 14),                  // 基础血量 1→8
-    snakeSpeed: Math.min(80 + n * 2.2, 280)                // 一行行横走，碰壁下一行
+    len: Math.min(24 + Math.round(n * 2), 90),            // 更长的蛇
+    hpBase: 1 + Math.floor((n - 1) / 22),                  // 基础血量 1→5
+    descendSpeed: Math.min(8 + n * 0.06, 14)               // 整体下压速度
   };
 }
 
@@ -289,8 +289,8 @@ const S_MENU = 'menu', S_PLAY = 'play', S_CLEAR = 'clear', S_OVER = 'over';
 let state = S_MENU;
 let level = 1, levelData = null;
 let bricks = [];                          // 蛇身鳞片
-let head = { x: 0, y: 0 };
-let rowDir = 1, rowY = 0, descent = 0;
+let head = { x: 0, y: 0, ang: -Math.PI / 2 };
+let descent = 0, swayPhase = 0;
 let bullets = [], powerups = [], bolts = [];
 let particles = [], popups = [];
 let score = 0, shatterCount = 0, streak = 0, streakT = 0;
@@ -319,26 +319,19 @@ function buildSnake() {
   const rnd = mulberry32(level * 2654435 + 17);
   const n = levelData.len;
   bricks = [];
-  const rowStep = BRICK_H + GAP;
-  rowY = TOP + 40;
-  rowDir = rnd() < 0.5 ? 1 : -1;
   descent = 0;
-  head = { x: rowDir > 0 ? offX + 30 : offX + playW - 30, y: rowY };
-  // 初始按蛇形折行铺开，与行进方式一致
-  let x = head.x, y = rowY, dir = -rowDir;
+  swayPhase = rnd() * TAU;
+  head = { x: W / 2, y: TOP - 30, ang: -Math.PI / 2 };
+  // 蛇身从蛇头向屏幕上方延伸（画面外），随下压逐渐进入视野
   for (let i = 0; i < n; i++) {
-    const hp = Math.max(1, Math.min(30,
-      levelData.hpBase + Math.floor(i / 10) + (rnd() < 0.25 ? 1 : 0)));
-    bricks.push({ x, y, ang: dir > 0 ? 0 : Math.PI, hp, maxHp: hp, flash: 0, punch: 0, cd: 0 });
-    x += dir * SEG_SPACING;
-    if (x < offX + 26 || x > offX + playW - 26) {
-      x = Math.max(offX + 26, Math.min(offX + playW - 26, x));
-      y += rowStep;
-      dir = -dir;
-    }
+    const hp = Math.max(1, Math.min(30, levelData.hpBase + Math.floor(i / 14) + (rnd() < 0.25 ? 1 : 0)));
+    bricks.push({
+      x: head.x, y: head.y - i * SEG_SPACING,
+      ang: -Math.PI / 2, hp, maxHp: hp, flash: 0, punch: 0, cd: 0
+    });
   }
   // 初始压境余量
-  initialGap = Math.max(1, gunnerY - lowestBottom());
+  initialGap = Math.max(1, gunnerY - head.y);
   minGap = initialGap;
 }
 function lowestBottom() {
@@ -641,14 +634,14 @@ function update(rdt) {
   if (rapidT > 0) rapidT -= rdt;
   if (rainbowT > 0) rainbowT -= rdt;
 
-  // 长蛇：一行一行横走，碰壁折返下移一行
+  // 长蛇：像怪潮一样整体下压，蛇头左右摆动带路，蛇身拖成 S 形波浪
   if (state === S_PLAY && introT >= 0.3) {
-    const rowStep = BRICK_H + GAP;
-    head.x += rowDir * levelData.snakeSpeed * dt;
-    head.y = rowY + Math.sin(head.x * 0.03 + level) * 4;
-    const bx0 = offX + 26, bx1 = offX + playW - 26;
-    if (head.x > bx1) { head.x = bx1; rowDir = -1; rowY += rowStep; descent += rowStep; }
-    else if (head.x < bx0) { head.x = bx0; rowDir = 1; rowY += rowStep; descent += rowStep; }
+    descent += levelData.descendSpeed * dt;
+    const cx = W / 2 + Math.sin(descent * 0.004 + swayPhase) * playW * 0.16;
+    const nx = cx + Math.sin(descent * 0.016 + swayPhase) * Math.min(150, playW * 0.2);
+    const ny = TOP - 30 + descent;
+    head.ang = Math.atan2(ny - head.y, nx - head.x);
+    head.x = nx; head.y = ny;
     for (let i = 0; i < bricks.length; i++) {
       const s = bricks[i];
       const px = i === 0 ? head.x : bricks[i - 1].x;
@@ -661,10 +654,10 @@ function update(rdt) {
       s.ang = Math.atan2(dy, dx);
       s.cd = Math.max(0, s.cd - dt);
     }
-    // 压到枪手位置 = 失败
-    if (state === S_PLAY && lowestBottom() >= gunnerY - 12) doFail();
+    // 蛇头压到枪手位置 = 失败
+    if (state === S_PLAY && head.y + BRICK_H / 2 >= gunnerY - 16) doFail();
     // 星级：跟踪最小安全距离
-    minGap = Math.min(minGap, Math.max(0, gunnerY - lowestBottom()));
+    minGap = Math.min(minGap, Math.max(0, gunnerY - head.y));
   }
 
   // 枪手
@@ -807,6 +800,7 @@ function render() {
   drawDangerGauge();
   drawSnakeBody();
   drawBricks();
+  drawSnakeHead();
   drawPowerups();
   drawBullets();
   drawBolts();
@@ -830,7 +824,7 @@ function drawRails() {
 /* 压境进度条：右缘竖条，蛇越近越红 */
 function drawDangerGauge() {
   if (state === S_MENU) return;
-  const ratio = Math.max(0, Math.min(1, (gunnerY - lowestBottom()) / Math.max(initialGap, 1)));
+  const ratio = Math.max(0, Math.min(1, (gunnerY - head.y) / Math.max(initialGap, 1)));
   const x = offX + playW + 14, h = H - 120, y0 = 60;
   ctx.fillStyle = 'rgba(255,255,255,0.08)';
   roundRect(x, y0, 6, h, 3); ctx.fill();
@@ -860,15 +854,15 @@ function drawSnakeBody() {
 }
 function drawBricks() {
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  const t = performance.now() / 1000;
-  for (let i = 0; i < bricks.length; i++) {
+  for (let i = 1; i < bricks.length; i++) {
     const b = bricks[i];
     const col = tierColor(b.hp);
+    const taper = 1 - Math.min(i / Math.max(bricks.length, 1), 1) * 0.35;   // 越靠尾部越细
     const punch = 1 + b.punch * 0.08;
     ctx.save();
     ctx.translate(b.x, b.y);
     ctx.rotate(b.ang);
-    ctx.scale(punch, punch);
+    ctx.scale(punch * taper, punch * taper);
     const w = CELL - GAP, h = BRICK_H;
     ctx.fillStyle = col[1];
     roundRect(-w / 2, -h / 2 + 2, w, h, h * 0.4); ctx.fill();
@@ -883,24 +877,76 @@ function drawBricks() {
       ctx.fillStyle = 'rgba(255,255,255,' + (b.flash * 0.75) + ')';
       roundRect(-w / 2, -h / 2, w, h - 2, h * 0.4); ctx.fill();
     }
-    if (i === 0) {
-      ctx.shadowColor = 'rgba(255,255,255,0.8)';
-      ctx.shadowBlur = 8 + 5 * Math.sin(t * 6);
-      ctx.fillStyle = 'rgba(255,255,255,0.95)';
-      ctx.beginPath();
-      ctx.arc(-w * 0.18, -h * 0.3, 1.9, 0, TAU);
-      ctx.arc(w * 0.18, -h * 0.3, 1.9, 0, TAU);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-    }
     ctx.fillStyle = '#fff';
-    const fs = Math.round(h * 0.6 * (1 + b.punch * 0.35));
+    const fs = Math.round(h * 0.62 * (1 + b.punch * 0.35));
     ctx.font = '800 ' + fs + 'px system-ui, "PingFang SC", sans-serif';
     ctx.shadowColor = 'rgba(0,0,0,0.4)'; ctx.shadowBlur = 3; ctx.shadowOffsetY = 1;
     ctx.fillText(String(b.hp), 0, -1);
     ctx.restore();
   }
   ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+}
+/* 真正的龙头：角、眼、牙、呼吸发光 */
+function drawSnakeHead() {
+  const b = bricks[0];
+  if (!b) return;
+  const t = performance.now() / 1000;
+  const w = CELL * 1.55, h = BRICK_H * 1.7;
+  const punch = 1 + b.punch * 0.1;
+  ctx.save();
+  ctx.translate(b.x, b.y);
+  ctx.rotate(head.ang + Math.PI / 2);      // 头部朝向前进方向
+  ctx.scale(punch, punch);
+  ctx.shadowColor = 'rgba(255,90,90,0.9)';
+  ctx.shadowBlur = 12 + 6 * Math.sin(t * 5);
+  // 龙角（向后上方两根）
+  ctx.fillStyle = '#ffe066';
+  ctx.beginPath();
+  ctx.moveTo(-w * 0.12, -h * 0.45);
+  ctx.lineTo(-w * 0.3, -h * 1.25);
+  ctx.lineTo(-w * 0.38, -h * 0.4);
+  ctx.closePath(); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(w * 0.12, -h * 0.45);
+  ctx.lineTo(w * 0.3, -h * 1.25);
+  ctx.lineTo(w * 0.38, -h * 0.4);
+  ctx.closePath(); ctx.fill();
+  ctx.shadowBlur = 0;
+  // 头部（红色渐变，前端是嘴）
+  const g = ctx.createLinearGradient(-w / 2, 0, w / 2, 0);
+  g.addColorStop(0, '#c92a2a');
+  g.addColorStop(1, '#ff8787');
+  ctx.fillStyle = g;
+  roundRect(-w * 0.5, -h / 2, w, h, h * 0.46); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.25)';
+  roundRect(-w * 0.42, -h * 0.42, w * 0.5, h * 0.3, h * 0.15); ctx.fill();
+  // 眼睛
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.arc(w * 0.16, -h * 0.26, h * 0.17, 0, TAU);
+  ctx.arc(w * 0.16, h * 0.26, h * 0.17, 0, TAU);
+  ctx.fill();
+  ctx.fillStyle = '#1a1030';
+  ctx.beginPath();
+  ctx.arc(w * 0.22, -h * 0.26, h * 0.08, 0, TAU);
+  ctx.arc(w * 0.22, h * 0.26, h * 0.08, 0, TAU);
+  ctx.fill();
+  // 牙
+  ctx.fillStyle = '#fff';
+  for (const k of [-0.28, 0, 0.28]) {
+    ctx.beginPath();
+    ctx.moveTo(w * 0.5 - h * 0.1, h * k - h * 0.09);
+    ctx.lineTo(w * 0.5 + h * 0.06, h * k);
+    ctx.lineTo(w * 0.5 - h * 0.1, h * k + h * 0.09);
+    ctx.closePath(); ctx.fill();
+  }
+  // 血量数字
+  ctx.fillStyle = '#fff';
+  ctx.font = '800 ' + Math.round(h * 0.52) + 'px system-ui, "PingFang SC", sans-serif';
+  ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 3;
+  ctx.fillText(String(b.hp), -w * 0.08, 0);
+  ctx.restore();
+  ctx.shadowBlur = 0;
 }
 function drawPowerups() {
   const t = performance.now() / 1000;

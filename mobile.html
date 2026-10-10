@@ -24,6 +24,7 @@
   h2 { color:#fff; font-size:clamp(1.6rem, 6vw, 2.4rem); font-weight:800; }
   .sub { color:rgba(255,255,255,.62); font-size:.95rem; letter-spacing:.12em; margin-top:-8px; }
   .hint { color:rgba(255,255,255,.42); font-size:.82rem; margin-top:10px; line-height:1.7; }
+  .credit { color:rgba(255,255,255,.25); font-size:.66rem; margin-top:2px; }
   button { border:none; cursor:pointer; font-family:inherit; font-weight:700; color:#fff;
     font-size:1.05rem; padding:13px 34px; border-radius:999px;
     background:linear-gradient(180deg,#4c6ef5,#364fc7);
@@ -65,7 +66,8 @@
   <button id="btnContinue">开始挑战</button>
   <button id="btnLevels" class="ghost">选 关</button>
   <button id="btnMute" class="ghost">🔊 音效：开</button>
-  <p class="hint">枪手自动开火，屏幕任意处左右滑动走位 · 蛇鳞全清过关<br>长蛇一行一行压下来，碰到枪手位置就失败了<br>定期三选一强化：伤害 / 射速 / 多重 / 暴击 / 穿透 / 雷电之芽<br>打碎蛇鳞还掉炫彩技能：散射 / 火焰 / 穿透 / 追踪 / 速射 / 彩虹</p>
+  <p class="hint">枪手自动开火，屏幕任意处左右滑动走位<br>长蛇一行一行压下来，碰到枪手位置就失败了<br>定期三选一强化：伤害 / 射速 / 多重 / 暴击 / 穿透 / 雷电之芽<br>打碎蛇鳞还掉炫彩技能：散射 / 火焰 / 穿透 / 追踪 / 速射 / 彩虹</p>
+  <p class="credit">蛇來了 · 素材：背景 CC0 · 音效 CC0 (Juhani Junkala / p0ss) · BGM "yewamb" CC-BY — opengameart.org</p>
 </div>
 
 <div id="levelsOv" class="overlay hidden">
@@ -174,6 +176,8 @@ function ensureAudio() {
     for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
   }
   if (AC.state === 'suspended') AC.resume();
+  loadSamples();
+  startBGM();
 }
 function blip(freq, dur, type, vol, slideTo) {
   if (!AC || muted) return;
@@ -200,23 +204,71 @@ function noiseHit(dur, freq, vol, type) {
   s.start(t); s.stop(t + dur + 0.02);
 }
 const sfx = {
-  shoot() { blip(760, 0.05, 'square', 0.05, 260); },
-  hit(streak) { blip(320 * Math.pow(1.045, Math.min(streak, 26)), 0.05, 'square', 0.09); },
+  shoot() { if (playSample('shoot', 0.16)) return; blip(760, 0.05, 'square', 0.05, 260); },
+  hit(streak) { blip(320 * Math.pow(1.045, Math.min(streak, 26)), 0.05, 'square', 0.10); },
   pop(streak, hp) {
-    noiseHit(0.1, 1600, 0.2);
-    blip(460 * Math.pow(1.05, Math.min(streak, 20)), 0.09, 'triangle', 0.16, 180);
-    if (hp >= 8) blip(140, 0.12, 'sine', 0.14, 60);
+    if (playSample('pop', 0.5)) return;
+    noiseHit(0.1, 1600, 0.22);
+    blip(460 * Math.pow(1.05, Math.min(streak, 20)), 0.09, 'triangle', 0.18, 180);
+    if (hp >= 8) blip(140, 0.12, 'sine', 0.16, 60);
   },
-  pickup() { blip(660, 0.09, 'triangle', 0.2); setTimeout(() => blip(990, 0.12, 'triangle', 0.2), 80); },
+  pickup() { if (playSample('pickup', 0.5)) return; blip(660, 0.09, 'triangle', 0.2); setTimeout(() => blip(990, 0.12, 'triangle', 0.2), 80); },
   fire() { noiseHit(0.4, 900, 0.22); blip(320, 0.25, 'sawtooth', 0.12, 90); },
   laser() { blip(1200, 0.06, 'sawtooth', 0.1, 500); },
   thunder() { noiseHit(0.15, 2400, 0.25, 'highpass'); blip(180, 0.18, 'sawtooth', 0.16, 60); },
   meteor() { noiseHit(0.3, 700, 0.3); blip(120, 0.3, 'sine', 0.2, 40); },
   rainbow() { [523, 659, 784].forEach((f, i) => setTimeout(() => blip(f, 0.08, 'square', 0.1), i * 50)); },
-  fail() { blip(220, 0.55, 'sawtooth', 0.22, 70); noiseHit(0.4, 500, 0.25); },
+  fail() { playSample('boom', 0.8); blip(220, 0.55, 'sawtooth', 0.22, 70); noiseHit(0.4, 500, 0.25); },
   clear() { [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => blip(f, 0.22, 'triangle', 0.22), i * 95)); }
 };
 function buzz(ms) { if (navigator.vibrate) try { navigator.vibrate(ms); } catch (e) {} }
+
+/* ---------- 免费素材加载（CC0/CC-BY，来源与署名见 README） ---------- */
+const ASSETS = {
+  bg: 'assets/bg.jpg',
+  bgm: 'assets/bgm.m4a',
+  sfx: { pop: 'assets/pop.mp3', boom: 'assets/boom.wav', shoot: 'assets/shoot.mp3', pickup: 'assets/pickup.mp3' }
+};
+let bgImg = null, bgOk = false;
+const sampleBuf = {};
+let samplesRequested = false;
+let bgmEl = null, bgmOn = false;
+try {
+  bgImg = new Image();
+  bgImg.onload = () => { bgOk = true; };
+  bgImg.src = ASSETS.bg;
+} catch (e) {}
+function loadSamples() {
+  if (!AC || samplesRequested) return;
+  samplesRequested = true;
+  for (const k in ASSETS.sfx) {
+    fetch(ASSETS.sfx[k]).then(r => r.ok ? r.arrayBuffer() : Promise.reject())
+      .then(ab => AC.decodeAudioData(ab))
+      .then(buf => { sampleBuf[k] = buf; })
+      .catch(() => {});
+  }
+}
+function playSample(k, vol) {
+  if (!AC || muted || !sampleBuf[k]) return false;
+  try {
+    const src = AC.createBufferSource();
+    src.buffer = sampleBuf[k];
+    const g = AC.createGain(); g.gain.value = vol;
+    src.connect(g); g.connect(master);
+    src.start();
+    return true;
+  } catch (e) { return false; }
+}
+function startBGM() {
+  if (bgmOn || muted) return;
+  try {
+    bgmEl = new Audio(ASSETS.bgm);
+    bgmEl.loop = true; bgmEl.volume = 0.3;
+    const pr = bgmEl.play();
+    if (pr && pr.then) pr.then(() => { bgmOn = true; }).catch(() => {});
+  } catch (e) {}
+}
+function stopBGM() { if (bgmEl) { bgmEl.pause(); bgmOn = false; } }
 
 /* ---------- 关卡参数（种子随机，100 关） ---------- */
 function mulberry32(a) {
@@ -741,8 +793,16 @@ function update(rdt) {
 /* ---------- 渲染 ---------- */
 function render() {
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  ctx.fillStyle = bgGrad;
-  ctx.fillRect(0, 0, W, H);
+  if (bgOk && bgImg) {
+    const sc = Math.max(W / bgImg.width, H / bgImg.height);
+    const dw = bgImg.width * sc, dh = bgImg.height * sc;
+    ctx.drawImage(bgImg, (W - dw) / 2, (H - dh) / 2, dw, dh);
+    ctx.fillStyle = 'rgba(10,12,30,0.48)';
+    ctx.fillRect(0, 0, W, H);
+  } else {
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, W, H);
+  }
   ctx.save();
   if (shake > 0.2) ctx.translate((Math.random() * 2 - 1) * shake, (Math.random() * 2 - 1) * shake);
   ctx.globalAlpha = introT;
@@ -1134,7 +1194,8 @@ document.getElementById('btnMute').addEventListener('click', () => {
   muted = !muted;
   try { localStorage.setItem('brickBlaster.muted', muted ? '1' : '0'); } catch (e) {}
   refreshMenu();
-  if (!muted) { ensureAudio(); blip(660, 0.08, 'triangle', 0.15); }
+  if (muted) stopBGM();
+  else { ensureAudio(); startBGM(); blip(660, 0.08, 'triangle', 0.15); }
 });
 document.getElementById('btnNext').addEventListener('click', () => startLevel(level + 1));
 document.getElementById('btnReplay').addEventListener('click', () => startLevel(level));
@@ -1164,6 +1225,8 @@ window.__bb = {
   get snakeHead() { return { x: Math.round(head.x), y: Math.round(head.y) }; },
   get powerupCount() { return powerups.length; },
   get stats() { return { dmgMul, rateMul, extraBullets, critChance, pierceExtra, thunderWeapon }; },
+  get samplesLoaded() { return Object.keys(sampleBuf).length; },
+  get bgReady() { return bgOk; },
   forceUpgrade: () => openUpgrade(),
   get descent() { return Math.round(descent); }
 };

@@ -57,7 +57,7 @@
   <button id="btnContinue">开始挑战</button>
   <button id="btnLevels" class="ghost">选 关</button>
   <button id="btnMute" class="ghost">🔊 音效：开</button>
-  <p class="hint">按住屏幕任意处：左右滑 = 移动枪手，按住不放 = 持续射击<br>长蛇会不断加速下压，压到枪手位置就失败了<br>打碎蛇鳞掉炫彩技能：散射 / 火焰 / 穿透 / 追踪 / 速射 / 彩虹</p>
+  <p class="hint">枪手自动开火，屏幕任意处左右滑动即可走位<br>长蛇一行一行压下来，碰到枪手位置就失败了<br>打碎蛇鳞掉炫彩技能：散射 / 火焰 / 穿透 / 追踪 / 速射 / 彩虹</p>
 </div>
 
 <div id="levelsOv" class="overlay hidden">
@@ -215,11 +215,9 @@ function mulberry32(a) {
 }
 function genLevel(n) {
   return {
-    len: Math.min(18 + Math.round(n * 1.2), 50),          // 蛇更长
-    hpBase: 1 + Math.floor((n - 1) / 16),                  // 基础血量 1→7
-    snakeSpeed: Math.min(70 + n * 2, 260),                 // 游走更快
-    descendSpeed: 2.5 + n * 0.06,                          // 持续下压
-    turnT: Math.max(0.8, 2.2 - n * 0.014)
+    len: Math.min(28 + Math.round(n * 1.3), 80),          // 蛇更长，一行行盘下来
+    hpBase: 1 + Math.floor((n - 1) / 14),                  // 基础血量 1→8
+    snakeSpeed: Math.min(80 + n * 2.2, 280)                // 一行行横走，碰壁下一行
   };
 }
 
@@ -229,7 +227,7 @@ let state = S_MENU;
 let level = 1, levelData = null;
 let bricks = [];                          // 蛇身鳞片
 let head = { x: 0, y: 0 };
-let heading = 0, turnVel = 0.6, snakeT = 0, descent = 0;
+let rowDir = 1, rowY = 0, descent = 0;
 let bullets = [], powerups = [], bolts = [];
 let particles = [], popups = [];
 let score = 0, shatterCount = 0, streak = 0, streakT = 0;
@@ -237,7 +235,7 @@ let introT = 1;
 let timeScale = 1, slowmoT = 0, shake = 0, flash = 0, flashColor = '255,255,255';
 let paused = false, overT = 0;
 let gunnerX = 0, gunnerTarget = 0, muzzleT = 0, walkT = 0;
-let firing = false, pointerFiring = false, spaceFiring = false, fireCd = 0;
+let firing = false, fireCd = 0;
 // 炫彩子弹技能
 let spreadT = 0, fireT = 0, pierceT = 0, homingT = 0, rapidT = 0, rainbowT = 0;
 let keys = { left: false, right: false };
@@ -253,20 +251,23 @@ function buildSnake() {
   const rnd = mulberry32(level * 2654435 + 17);
   const n = levelData.len;
   bricks = [];
-  head = { x: offX + playW * 0.5, y: bandTop() + 40 };
-  heading = rnd() < 0.5 ? 0 : Math.PI;
-  turnVel = (rnd() < 0.5 ? -1 : 1) * 0.8;
-  snakeT = levelData.turnT;
+  const rowStep = BRICK_H + GAP;
+  rowY = TOP + 40;
+  rowDir = rnd() < 0.5 ? 1 : -1;
   descent = 0;
+  head = { x: rowDir > 0 ? offX + 30 : offX + playW - 30, y: rowY };
+  // 初始按蛇形折行铺开，与行进方式一致
+  let x = head.x, y = rowY, dir = -rowDir;
   for (let i = 0; i < n; i++) {
     const hp = Math.max(1, Math.min(30,
       levelData.hpBase + Math.floor(i / 10) + (rnd() < 0.25 ? 1 : 0)));
-    const a = i * 0.4, r = Math.min(i * SEG_SPACING * 0.55, 150);
-    bricks.push({
-      x: Math.max(offX + 24, Math.min(offX + playW - 24, head.x + Math.cos(a) * r)),
-      y: Math.max(bandTop(), Math.min(bandBottom(), head.y + Math.sin(a) * r)),
-      ang: 0, hp, maxHp: hp, flash: 0, punch: 0, cd: 0
-    });
+    bricks.push({ x, y, ang: dir > 0 ? 0 : Math.PI, hp, maxHp: hp, flash: 0, punch: 0, cd: 0 });
+    x += dir * SEG_SPACING;
+    if (x < offX + 26 || x > offX + playW - 26) {
+      x = Math.max(offX + 26, Math.min(offX + playW - 26, x));
+      y += rowStep;
+      dir = -dir;
+    }
   }
   // 初始压境余量
   initialGap = Math.max(1, gunnerY - lowestBottom());
@@ -286,7 +287,7 @@ function startLevel(n) {
   particles = []; popups = [];
   score = 0; shatterCount = 0; streak = 0; streakT = 0;
   spreadT = 0; fireT = 0; pierceT = 0; homingT = 0; rapidT = 0; rainbowT = 0;
-  firing = false; pointerFiring = false; spaceFiring = false; fireCd = 0;
+  firing = false; fireCd = 0;
   slowmoT = 0; shake = 0; flash = 0; overT = 0;
   introT = 0;
   paused = false;
@@ -458,7 +459,6 @@ canvas.addEventListener('pointerdown', e => {
   } else {
     gunnerTarget = clampTarget(e.clientX);
   }
-  pointerFiring = true;
 });
 window.addEventListener('pointermove', e => {
   if (state !== S_PLAY || paused) return;
@@ -468,17 +468,13 @@ window.addEventListener('pointermove', e => {
     gunnerTarget = clampTarget(e.clientX);
   }
 });
-function releasePointer(e) {
-  if (e.pointerType === 'touch') touchAnchorX = null;
-  pointerFiring = false;
-}
+function releasePointer(e) { if (e.pointerType === 'touch') touchAnchorX = null; }
 window.addEventListener('pointerup', releasePointer);
 window.addEventListener('pointercancel', releasePointer);
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 window.addEventListener('keydown', e => {
   if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') { keys.left = true; e.preventDefault(); }
   if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') { keys.right = true; e.preventDefault(); }
-  if (e.code === 'Space') { ensureAudio(); spaceFiring = true; e.preventDefault(); }
   if (e.key === 'Escape' && (state === S_PLAY)) {
     paused = !paused;
     if (paused) show('pauseOv'); else hideAll();
@@ -487,7 +483,6 @@ window.addEventListener('keydown', e => {
 window.addEventListener('keyup', e => {
   if (e.key === 'ArrowLeft' || e.key === 'a' || e.key === 'A') keys.left = false;
   if (e.key === 'ArrowRight' || e.key === 'd' || e.key === 'D') keys.right = false;
-  if (e.code === 'Space') spaceFiring = false;
 });
 
 /* ---------- 子弹 ---------- */
@@ -526,7 +521,7 @@ function bulletHitSegment(b, s) {
   const cx = Math.max(-hw, Math.min(lx, hw));
   const cy = Math.max(-hh, Math.min(ly, hh));
   const ddx = lx - cx, ddy = ly - cy;
-  return ddx * ddx + ddy * ddy <= 36;   // 子弹半径≈6
+  return ddx * ddx + ddy * ddy <= 49;   // 子弹半径≈7
 }
 function bulletImpact(b) {
   if (fireT > 0) {
@@ -556,24 +551,14 @@ function update(rdt) {
   if (rapidT > 0) rapidT -= rdt;
   if (rainbowT > 0) rainbowT -= rdt;
 
-  // 长蛇：游走 + 持续下压
+  // 长蛇：一行一行横走，碰壁折返下移一行
   if (state === S_PLAY && introT >= 0.3) {
-    descent += levelData.descendSpeed * dt;
-    snakeT -= dt;
-    if (snakeT <= 0) {
-      snakeT = levelData.turnT * (0.7 + Math.random() * 0.6);
-      turnVel = (Math.random() * 2 - 1) * 1.8;
-    }
-    heading += turnVel * dt;
-    const sp = levelData.snakeSpeed;
-    head.x += Math.cos(heading) * sp * dt;
-    head.y += Math.sin(heading) * sp * dt;
+    const rowStep = BRICK_H + GAP;
+    head.x += rowDir * levelData.snakeSpeed * dt;
+    head.y = rowY + Math.sin(head.x * 0.03 + level) * 4;
     const bx0 = offX + 26, bx1 = offX + playW - 26;
-    const by0 = bandTop(), by1 = bandBottom();
-    if (head.x < bx0) { head.x = bx0; heading = Math.PI - heading; }
-    else if (head.x > bx1) { head.x = bx1; heading = Math.PI - heading; }
-    if (head.y < by0) { head.y = by0; heading = -heading; }
-    else if (head.y > by1) { head.y = by1; heading = -heading; }
+    if (head.x > bx1) { head.x = bx1; rowDir = -1; rowY += rowStep; descent += rowStep; }
+    else if (head.x < bx0) { head.x = bx0; rowDir = 1; rowY += rowStep; descent += rowStep; }
     for (let i = 0; i < bricks.length; i++) {
       const s = bricks[i];
       const px = i === 0 ? head.x : bricks[i - 1].x;
@@ -603,13 +588,13 @@ function update(rdt) {
   muzzleT = Math.max(0, muzzleT - rdt);
 
   // 射击
-  firing = state === S_PLAY && !paused && introT >= 1 && (pointerFiring || spaceFiring);
+  firing = state === S_PLAY && !paused && introT >= 1;   // 自动射击
   if (firing) {
     fireCd -= rdt;
     if (fireCd <= 0) { fireCd = fireInterval(); fireOnce(); }
   } else fireCd = Math.min(fireCd, 0.05);
 
-  // 子弹
+  // 子弹（3 段子步推进，杜绝高速穿身）
   for (let i = bullets.length - 1; i >= 0; i--) {
     const b = bullets[i];
     // 追踪：缓慢转向最近蛇鳞
@@ -632,27 +617,31 @@ function update(rdt) {
         b.vx = Math.cos(cur) * sp; b.vy = Math.sin(cur) * sp;
       }
     }
-    b.x += b.vx * dt;
-    b.y += b.vy * dt;
+    let dead = false;
+    const steps = 3;
+    for (let st = 0; st < steps && !dead; st++) {
+      b.x += b.vx * dt / steps;
+      b.y += b.vy * dt / steps;
+      if (b.y < -20) { dead = true; break; }
+      for (let k = bricks.length - 1; k >= 0; k--) {
+        const s = bricks[k];
+        const pierce = pierceT > 0;
+        if (pierce && s.cd > 0) continue;
+        if (bulletHitSegment(b, s)) {
+          if (pierce) s.cd = 0.15;
+          damageSegment(s, b.dmg, false);
+          bulletImpact(b);
+          if (!pierce) dead = true;
+          break;
+        }
+      }
+    }
     if (Math.random() < 0.4) {
       particles.push({ type: 'spark', x: b.x, y: b.y, vx: 0, vy: 0, w: 1.8, h: 0, rot: 0, vr: 0, color: b.color, life: 0.18, age: 0, grav: 0 });
     }
-    let dead = b.y < -20;
-    for (let k = bricks.length - 1; k >= 0; k--) {
-      const s = bricks[k];
-      if (s.cd > 0 && pierceT > 0) continue;
-      if (bulletHitSegment(b, s)) {
-        s.cd = pierceT > 0 ? 0.14 : 999;
-        damageSegment(s, b.dmg, false);
-        bulletImpact(b);
-        if (pierceT <= 0) { dead = true; }
-        break;
-      }
-    }
     if (dead || b.x < offX - 20 || b.x > offX + playW + 20) bullets.splice(i, 1);
   }
-  // 穿透模式用完了 cd 复位
-  for (const s of bricks) if (s.cd > 0 && s.cd < 900) s.cd = Math.max(0, s.cd - dt);
+  for (const s of bricks) s.cd = Math.max(0, s.cd - dt);
 
   // 技能胶囊
   for (let i = powerups.length - 1; i >= 0; i--) {
@@ -920,12 +909,12 @@ function drawGunner() {
     ctx.textAlign = 'right';
     ctx.fillText(tags.join(' · '), W - 16, H - 12);
   }
-  if (state === S_PLAY && introT >= 1 && bullets.length === 0 && !firing) {
+  if (state === S_PLAY && introT >= 1 && score === 0) {
     const a = 0.4 + 0.25 * Math.sin(t * 4);
     ctx.fillStyle = 'rgba(255,255,255,' + a + ')';
     ctx.font = '600 14px system-ui, "PingFang SC", sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('按住屏幕 / 空格 持续射击', gunnerX, gunnerY - 56);
+    ctx.fillText('自动开火中 · 左右移动走位躲避长蛇', gunnerX, gunnerY - 56);
   }
 }
 function drawParticles() {
@@ -1061,12 +1050,11 @@ document.addEventListener('visibilitychange', () => {
 /* 调试接口（自动化测试用） */
 window.__bb = {
   startLevel,
-  setFiring: v => { pointerFiring = !!v; },
   gunnerTo: px => { gunnerTarget = clampTarget(px); },
   give: t => giveBuff(t),
   weaken: () => { bricks.forEach(b => { b.hp = 1; }); },
   nuke: () => { bricks.slice().forEach(b => shatterSegment(b, true)); },
-  forceDescend: px => { descent += px; },
+  forceDescend: px => { rowY += px; descent += px; },
   get state() { return state; },
   get level() { return level; },
   get score() { return score; },

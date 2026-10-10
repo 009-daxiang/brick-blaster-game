@@ -53,11 +53,11 @@
 
 <div id="menuOv" class="overlay">
   <h1>暴击砖块</h1>
-  <p class="sub">横板打砖块 · 越弹越爽 · 100 关闯关</p>
+  <p class="sub">长蛇砖阵 · 炫目技能 · 100 关闯关</p>
   <button id="btnContinue">开始挑战</button>
   <button id="btnLevels" class="ghost">选 关</button>
   <button id="btnMute" class="ghost">🔊 音效：开</button>
-  <p class="hint">屏幕任意处左右滑动控制横板（手指不必压在弹板上），点按发射<br>球全部掉落扣一条命（共 3 条）· 砖阵不停下压，压到弹板平行即失败<br>打碎紫色「0」号砖必掉「分裂」· 多球时接住任意一颗就继续</p>
+  <p class="hint">屏幕任意处左右滑动控制横板（手指不必压在弹板上），点按发射<br>球撞到蛇身后会随机偏转 · 全部掉落扣一条命（共 3 条）<br>打碎蛇鳞随机掉技能：分裂 / 火球 / 激光 / 天雷 / 陨石雨 · 全清蛇鳞过关</p>
 </div>
 
 <div id="levelsOv" class="overlay hidden">
@@ -97,10 +97,11 @@
 <script>
 'use strict';
 /* ============================================================
-   暴击砖块 · 横板打砖块 100 关
-   Arkanoid/Breakout 复刻：横板接球反弹 → 削砖 → 全清过关
-   规则：球全部掉落 = -1 命；多球时接住任意一颗即存活
-   单文件 / 零外部资源：砖块 Canvas 手绘，音效 WebAudio 合成
+   暴击砖块 · 长蛇砖阵 100 关
+   数字格串成一条会游走的长蛇：蛇头带路、蛇身跟随
+   球撞蛇身后随机偏转；碎鳞掉落炫目技能
+   分裂 / 火球(穿透) / 激光 / 天雷(连锁) / 陨石雨
+   单文件 / 零外部资源：Canvas 手绘 + WebAudio 合成音效
    ============================================================ */
 const TAU = Math.PI * 2;
 const MAX_LEVEL = 100;
@@ -109,8 +110,7 @@ const ctx = canvas.getContext('2d');
 
 /* ---------- 自适应 ---------- */
 let W = 0, H = 0, DPR = 1;
-const COLS = 11;
-let CELL = 50, BRICK_H = 26, GAP = 5, BALL_R = 7;
+let CELL = 50, BRICK_H = 26, GAP = 5, BALL_R = 7, SEG_SPACING = 44;
 let offX = 0, playW = 0, TOP = 90;
 let paddleY = 0, bgGrad = null;
 
@@ -119,12 +119,13 @@ function resize() {
   W = window.innerWidth; H = window.innerHeight;
   canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
   canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
-  CELL = Math.min(W / COLS, 58);
-  playW = CELL * COLS;
+  CELL = Math.min(W / 9, 58);
+  playW = CELL * 9;
   offX = (W - playW) / 2;
   BRICK_H = Math.round(CELL * 0.52);
   GAP = Math.max(3, Math.round(CELL * 0.08));
   BALL_R = Math.max(5, CELL * 0.11);
+  SEG_SPACING = Math.max(26, CELL * 0.92);
   TOP = Math.max(72, H * 0.11);
   paddleY = H - 58;
   bgGrad = ctx.createLinearGradient(0, 0, 0, H);
@@ -136,7 +137,7 @@ window.addEventListener('resize', resize);
 resize();
 
 /* ---------- 存档 ---------- */
-const SAVE_KEY = 'brickBlaster.paddle.v1';
+const SAVE_KEY = 'brickBlaster.snake.v1';
 let progress = { unlocked: 1, stars: {} };
 try {
   const raw = localStorage.getItem(SAVE_KEY);
@@ -194,8 +195,12 @@ const sfx = {
   },
   thump() { blip(200, 0.07, 'sine', 0.22, 90); noiseHit(0.04, 900, 0.1); },
   launch() { noiseHit(0.08, 3000, 0.12, 'highpass'); blip(500, 0.08, 'sine', 0.12, 900); },
-  power() { blip(620, 0.09, 'triangle', 0.2); setTimeout(() => blip(930, 0.12, 'triangle', 0.2), 80); },
+  pickup() { blip(660, 0.09, 'triangle', 0.2); setTimeout(() => blip(990, 0.12, 'triangle', 0.2), 80); },
   split() { blip(440, 0.07, 'square', 0.14); setTimeout(() => blip(660, 0.07, 'square', 0.14), 60); setTimeout(() => blip(880, 0.09, 'square', 0.14), 120); },
+  laser() { blip(1200, 0.06, 'sawtooth', 0.08, 500); },
+  thunder() { noiseHit(0.15, 2400, 0.25, 'highpass'); blip(180, 0.18, 'sawtooth', 0.16, 60); },
+  meteor() { noiseHit(0.3, 700, 0.3); blip(120, 0.3, 'sine', 0.2, 40); },
+  fire() { noiseHit(0.4, 900, 0.22); blip(320, 0.25, 'sawtooth', 0.12, 90); },
   lose() { blip(300, 0.35, 'sawtooth', 0.18, 90); },
   clear() { [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => blip(f, 0.22, 'triangle', 0.22), i * 95)); },
   fail() { blip(220, 0.55, 'sawtooth', 0.22, 70); noiseHit(0.4, 500, 0.25); },
@@ -203,7 +208,7 @@ const sfx = {
 };
 function buzz(ms) { if (navigator.vibrate) try { navigator.vibrate(ms); } catch (e) {} }
 
-/* ---------- 100 关生成（种子随机，每关固定） ---------- */
+/* ---------- 关卡参数（种子随机，100 关） ---------- */
 function mulberry32(a) {
   return function () {
     a |= 0; a = a + 0x6D2B79F5 | 0;
@@ -212,42 +217,14 @@ function mulberry32(a) {
     return ((t ^ t >>> 14) >>> 0) / 4294967296;
   };
 }
-/* 8 种砖阵图案轮换：随关卡推进，图案 × 血量 × 球速 × 板宽共同加压 */
-const PATTERNS = [
-  function full(c, r, C, R) { return true; },
-  function checker(c, r) { return (c + r) % 2 === 0; },
-  function frame(c, r, C, R) { return r === 0 || r === R - 1 || c === 0 || c === C - 1; },
-  function pyramid(c, r, C) { return Math.abs(c - (C - 1) / 2) <= r + 1; },
-  function diamond(c, r, C, R) { return Math.abs(c - (C - 1) / 2) / (C / 2) + Math.abs(r - (R - 1) / 2) / (R / 2) <= 1.02; },
-  function stripes(c, r) { return c % 2 === 0 || r % 2 === 1; },
-  function zigzag(c, r) { return (c + r * 2) % 4 < 2; },
-  function scatter(c, r, C, R, rnd) { return rnd() < 0.6; }
-];
 function genLevel(n) {
-  const rnd = mulberry32(n * 524287 + 99);
-  const C = COLS;
-  const R = Math.min(3 + Math.floor((n - 1) / 12), 8);       // 行数 3→8
-  const hpBase = 1 + Math.floor((n - 1) / 14);               // 基础血量 1→8
-  const pat = PATTERNS[(n - 1) % PATTERNS.length];
-  const bricks = [];
-  for (let r = 0; r < R; r++) {
-    for (let c = 0; c < C; c++) {
-      if (!pat(c, r, C, R, rnd)) continue;
-      let hp = hpBase + (rnd() < 0.3 ? 1 : 0) + Math.floor(r * 0.3);
-      hp = Math.max(1, Math.min(30, hp));
-      bricks.push({ c, r, hp, maxHp: hp, flash: 0, punch: 0 });
-    }
-  }
-  if (bricks.length === 0) for (let c = 0; c < C; c++) bricks.push({ c, r: 0, hp: 1, maxHp: 1, flash: 0, punch: 0 });
-  // 每关随机选一块「0」号砖：一碰即碎，必掉「分裂」道具（独立随机流，每关位置不同）
-  const srnd = mulberry32(n * 100003 + 7);
-  const sp = bricks[Math.floor(srnd() * bricks.length)];
-  sp.special = true; sp.hp = 1; sp.maxHp = 1;
   return {
-    bricks, rows: R,
+    len: Math.min(12 + Math.round(n * 1.1), 40),            // 蛇身节数
+    hpBase: 1 + Math.floor((n - 1) / 12),                    // 基础血量 1→9
+    snakeSpeed: Math.min(50 + n * 1.2, 170),                 // 游走速度
+    turnT: Math.max(1.0, 2.6 - n * 0.015),                   // 转向频率
     ballSpeed: Math.min(520 + (n - 1) * 3, 800),
-    paddleFactor: Math.max(2.5 - Math.floor((n - 1) / 20) * 0.2, 1.7),  // 每过20关缩一档
-    descendSpeed: 3 + (n - 1) * 0.08                                     // 砖阵下压速度 px/s
+    paddleFactor: Math.max(2.5 - Math.floor((n - 1) / 20) * 0.2, 1.7)  // 每过20关缩一档
   };
 }
 
@@ -255,66 +232,51 @@ function genLevel(n) {
 const S_MENU = 'menu', S_PLAY = 'play', S_CLEAR = 'clear', S_OVER = 'over';
 let state = S_MENU;
 let level = 1, levelData = null;
-let bricks = [], balls = [], powerups = [], particles = [], popups = [];
-let score = 0, lives = 3, livesLost = 0, streak = 0;
+let bricks = [];                 // 蛇身鳞片（数字格）
+let head = { x: 0, y: 0, ang: 0 };
+let heading = 0, turnVel = 0.6, snakeT = 0;
+let balls = [], powerups = [], lasers = [], meteors = [], bolts = [];
+let particles = [], popups = [];
+let score = 0, lives = 3, livesLost = 0, streak = 0, shatterCount = 0;
 let introT = 1;
 let timeScale = 1, slowmoT = 0, shake = 0, flash = 0, flashColor = '255,255,255';
-let schedShatters = [];
 let paused = false, overT = 0;
-let boardY = 0, descendSpeed = 0, warnBeepT = 0, failReason = 'drop';
+let fireT = 0, laserT = 0, thunderT = 0, laserCd = 0, meteorQueue = 0, meteorCd = 0;
 let paddleX = 0, paddleTarget = 0, paddlePunch = 0;
 let keys = { left: false, right: false };
 
-function paddleW() {
-  return Math.max(70, CELL * (levelData ? levelData.paddleFactor : 2.5));
-}
+function paddleW() { return Math.max(70, CELL * (levelData ? levelData.paddleFactor : 2.5)); }
 function baseSpeed() { return levelData ? levelData.ballSpeed : 520; }
-function brickRect(b) {
-  const introOff = (1 - Math.min(introT, 1)) * -160;
-  return {
-    x: offX + b.c * CELL + GAP / 2,
-    y: TOP + b.r * (BRICK_H + GAP) + boardY + introOff,
-    w: CELL - GAP, h: BRICK_H
-  };
-}
-
-/* ---------- 特效 ---------- */
-function addShards(x, y, w, h, color, n, power) {
-  for (let i = 0; i < n; i++) {
-    particles.push({
-      type: 'shard', x: x + Math.random() * w, y: y + Math.random() * h,
-      vx: (Math.random() * 2 - 1) * 240 * power, vy: -Math.random() * 260 * power - 40,
-      w: 4 + Math.random() * 8, h: 3 + Math.random() * 6,
-      rot: Math.random() * TAU, vr: (Math.random() * 2 - 1) * 10,
-      color, life: 0.7 + Math.random() * 0.4, age: 0, grav: 900
-    });
-  }
-}
-function addSparks(x, y, n, color, power) {
-  for (let i = 0; i < n; i++) {
-    const a = Math.random() * TAU, sp = (60 + Math.random() * 200) * power;
-    particles.push({
-      type: 'spark', x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-      w: 1.5 + Math.random() * 2.5, h: 0, rot: 0, vr: 0,
-      color, life: 0.3 + Math.random() * 0.3, age: 0, grav: 200
-    });
-  }
-}
-function addPopup(x, y, text, color, size) {
-  popups.push({ x, y, text, color, size: size || 18, age: 0, life: 0.75, vy: -72 });
-}
 
 /* ---------- 关卡流程 ---------- */
+function buildSnake() {
+  const rnd = mulberry32(level * 2654435 + 17);
+  const n = levelData.len;
+  bricks = [];
+  head = { x: offX + playW * 0.5, y: TOP + 60 };
+  heading = rnd() < 0.5 ? 0 : Math.PI;
+  turnVel = (rnd() < 0.5 ? -1 : 1) * 0.8;
+  snakeT = levelData.turnT;
+  for (let i = 0; i < n; i++) {
+    const hp = Math.max(1, Math.min(30,
+      levelData.hpBase + Math.floor(i / 7) + (rnd() < 0.25 ? 1 : 0)));
+    bricks.push({
+      x: head.x - i * SEG_SPACING, y: head.y + Math.sin(i * 0.55) * 16,
+      ang: 0, hp, maxHp: hp, flash: 0, punch: 0, cd: 0
+    });
+  }
+}
 function spawnStuckBall() {
   balls = [{ x: paddleX, y: paddleY - BALL_R - 4, vx: 0, vy: 0, stuck: true, trail: [] }];
 }
 function startLevel(n) {
   level = Math.min(n, MAX_LEVEL);
   levelData = genLevel(level);
-  bricks = levelData.bricks;
-  balls = []; powerups = []; particles = []; popups = []; schedShatters = [];
-  score = 0; lives = 3; livesLost = 0; streak = 0;
-  boardY = 0; descendSpeed = levelData.descendSpeed; warnBeepT = 0; failReason = 'drop';
+  buildSnake();
+  balls = []; powerups = []; lasers = []; meteors = []; bolts = [];
+  particles = []; popups = [];
+  score = 0; lives = 3; livesLost = 0; streak = 0; shatterCount = 0;
+  fireT = 0; laserT = 0; thunderT = 0; laserCd = 0; meteorQueue = 0;
   slowmoT = 0; shake = 0; flash = 0; overT = 0;
   introT = 0;
   paddleTarget = W / 2; paddleX = W / 2;
@@ -326,21 +288,18 @@ function startLevel(n) {
 function launch() {
   for (const b of balls) {
     if (!b.stuck) continue;
-    const a = (Math.random() * 22 - 11) * Math.PI / 180;   // ±11° 随机小偏角
+    const a = (Math.random() * 22 - 11) * Math.PI / 180;
     const s = baseSpeed();
     b.stuck = false;
     b.vx = Math.sin(a) * s; b.vy = -Math.cos(a) * s;
     sfx.launch();
   }
 }
-function doFail(reason) {
-  failReason = reason || 'drop';
+function doFail() {
   state = S_OVER;
   overT = 0;
   shake = 16; flash = 0.35; flashColor = '255,70,70';
   sfx.fail(); buzz(180);
-  const maxR = bricks.reduce((m, b) => Math.max(m, b.r), 0);
-  for (const b of bricks) schedShatters.push({ t: (maxR - b.r) * 0.06, b });
 }
 function doClear() {
   state = S_CLEAR;
@@ -377,7 +336,43 @@ function doClear() {
   }, 950);
 }
 
-/* ---------- 砖块：受击 / 碎裂 / 掉落道具 ---------- */
+/* ---------- 特效基元 ---------- */
+function addShards(x, y, color, n, power) {
+  for (let i = 0; i < n; i++) {
+    particles.push({
+      type: 'shard', x, y,
+      vx: (Math.random() * 2 - 1) * 240 * power, vy: -Math.random() * 260 * power - 40,
+      w: 4 + Math.random() * 8, h: 3 + Math.random() * 6,
+      rot: Math.random() * TAU, vr: (Math.random() * 2 - 1) * 10,
+      color, life: 0.7 + Math.random() * 0.4, age: 0, grav: 900
+    });
+  }
+}
+function addSparks(x, y, n, color, power) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * TAU, sp = (60 + Math.random() * 200) * power;
+    particles.push({
+      type: 'spark', x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+      w: 1.5 + Math.random() * 2.5, h: 0, rot: 0, vr: 0,
+      color, life: 0.3 + Math.random() * 0.3, age: 0, grav: 200
+    });
+  }
+}
+function addPopup(x, y, text, color, size) {
+  popups.push({ x, y, text, color, size: size || 18, age: 0, life: 0.75, vy: -72 });
+}
+function addBolt(x1, y1, x2, y2) {
+  const pts = [{ x: x1, y: y1 }];
+  const segs = 5;
+  for (let i = 1; i < segs; i++) {
+    const k = i / segs;
+    pts.push({ x: x1 + (x2 - x1) * k + (Math.random() * 2 - 1) * 14, y: y1 + (y2 - y1) * k + (Math.random() * 2 - 1) * 14 });
+  }
+  pts.push({ x: x2, y: y2 });
+  bolts.push({ pts, life: 0.18, age: 0 });
+}
+
+/* ---------- 蛇鳞：受击 / 碎裂 / 掉技能 ---------- */
 function tierColor(hp) {
   if (hp >= 20) return ['#e03131', '#7a1717'];
   if (hp >= 12) return ['#f76707', '#8f3b00'];
@@ -386,41 +381,63 @@ function tierColor(hp) {
   if (hp >= 2)  return ['#15aabf', '#0a5460'];
   return ['#4c6ef5', '#22347f'];
 }
-function hitBrick(b, bx, by) {
-  b.hp--;
-  score += 1;
-  b.flash = 1; b.punch = 1;
-  addSparks(bx, by, 3, 'rgba(255,255,255,0.9)', 0.8);
-  shake = Math.min(shake + 0.4, 4);
-  sfx.hit(streak);
-}
-function shatterBrick(b, silent) {
-  const rect = brickRect(b);
-  const col = tierColor(b.maxHp);
-  addShards(rect.x, rect.y, rect.w, rect.h, col[0], 5 + Math.min(Math.floor(b.maxHp / 3), 5), 0.7 + Math.min(b.maxHp * 0.06, 0.8));
-  addSparks(rect.x + rect.w / 2, rect.y + rect.h / 2, 6, 'rgba(255,255,255,0.85)', 1);
-  const cx = rect.x + rect.w / 2, cy = rect.y + rect.h / 2;
-  shake = Math.min(shake + 1.1 + b.maxHp * 0.2, 13);
-  if (!silent) {
-    score += b.maxHp * 5;
-    addPopup(cx, cy, '+' + (b.maxHp * 5), '#fff', 15 + Math.min(b.maxHp, 14));
-    streak++;
-    sfx.pop(streak, b.maxHp);
-    buzz(10);
-    if (b.special) dropPowerup(cx, cy);
+function damageSegment(s, dmg, chain) {
+  if (s.hp <= 0) return;
+  s.hp -= dmg;
+  s.flash = 1; s.punch = 1;
+  if (s.hp <= 0) {
+    shatterSegment(s, chain);
   } else {
-    noiseHit(0.09, 1200, 0.16);
+    score += 1;
+    addSparks(s.x, s.y, 3, 'rgba(255,255,255,0.9)', 0.8);
+    shake = Math.min(shake + 0.4, 4);
+    sfx.hit(streak);
   }
-  const i = bricks.indexOf(b);
+}
+function shatterSegment(s, chain) {
+  const col = tierColor(s.maxHp);
+  addShards(s.x, s.y, col[0], 5 + Math.min(Math.floor(s.maxHp / 3), 5), 0.7 + Math.min(s.maxHp * 0.06, 0.8));
+  addSparks(s.x, s.y, 6, 'rgba(255,255,255,0.85)', 1);
+  shake = Math.min(shake + 1.1 + s.maxHp * 0.2, 13);
+  score += s.maxHp * 5;
+  addPopup(s.x, s.y, '+' + (s.maxHp * 5), '#fff', 15 + Math.min(s.maxHp, 14));
+  streak++;
+  sfx.pop(streak, s.maxHp);
+  buzz(10);
+  const i = bricks.indexOf(s);
   if (i >= 0) bricks.splice(i, 1);
+  // 天雷：连锁闪电劈向最近蛇鳞
+  if (thunderT > 0 && !chain) chainStrike(s);
+  // 掉技能
+  shatterCount++;
+  if (shatterCount % 8 === 0 || Math.random() < 0.08) dropPowerup(s.x, s.y);
   if (bricks.length === 0 && state === S_PLAY) doClear();
 }
+function chainStrike(from) {
+  const near = bricks
+    .map(b => ({ b, d: (b.x - from.x) ** 2 + (b.y - from.y) ** 2 }))
+    .filter(o => o.d < 170 * 170)
+    .sort((a, b) => a.d - b.d)
+    .slice(0, 2);
+  for (const o of near) {
+    addBolt(from.x, from.y, o.b.x, o.b.y);
+    damageSegment(o.b, 1, true);
+  }
+  if (near.length) { sfx.thunder(); flash = Math.max(flash, 0.12); flashColor = '255,240,150'; }
+}
 
+/* ---------- 技能 ---------- */
 const POWER_TYPES = {
-  multi: { label: '分', color: '#ff922b', name: '弹球分裂！' }
+  multi:  { label: '分', color: '#ff922b', name: '弹球分裂！' },
+  fire:   { label: '火', color: '#ff6b6b', name: '火球穿透！' },
+  laser:  { label: '光', color: '#4dabf7', name: '激光扫射！' },
+  thunder:{ label: '雷', color: '#ffd43b', name: '天雷连锁！' },
+  meteor: { label: '陨', color: '#da77f2', name: '陨石雨！' }
 };
+const POWER_KEYS = Object.keys(POWER_TYPES);
 function dropPowerup(x, y) {
-  powerups.push({ x, y, vy: 170, type: 'multi', rot: 0 });
+  const type = POWER_KEYS[Math.floor(Math.random() * POWER_KEYS.length)];
+  powerups.push({ x, y, vy: 170, type, rot: 0 });
 }
 function splitBalls() {
   const flying = balls.filter(b => !b.stuck);
@@ -436,15 +453,23 @@ function splitBalls() {
     }
   }
   balls = balls.concat(add);
-  addPopup(flying[0].x, flying[0].y, '分裂 ×' + (flying.length * 2 + balls.length - add.length > 9 ? 9 : flying.length * 2 + 1), '#ff922b', 20);
+}
+function rainMeteors() {
+  meteorQueue += 6;
+  meteorCd = 0;
 }
 function catchPowerup(p) {
   const def = POWER_TYPES[p.type];
   score += 50;
   addPopup(paddleX, paddleY - 30, def.name, def.color, 19);
   addSparks(p.x, p.y, 10, def.color, 1.2);
-  flash = Math.max(flash, 0.08); flashColor = '160,200,255';
-  splitBalls(); sfx.split(); buzz(20);
+  flash = Math.max(flash, 0.1); flashColor = '200,190,255';
+  if (p.type === 'multi') { splitBalls(); sfx.split(); }
+  else if (p.type === 'fire') { fireT = 8; sfx.fire(); }
+  else if (p.type === 'laser') { laserT = 6; laserCd = 0; sfx.laser(); }
+  else if (p.type === 'thunder') { thunderT = 8; sfx.thunder(); }
+  else if (p.type === 'meteor') { rainMeteors(); sfx.meteor(); }
+  buzz(20);
 }
 
 /* ---------- 生命 ---------- */
@@ -528,28 +553,56 @@ function hitPaddle(b) {
   }
   streak = 0;
 }
-function collideBricks(b) {
-  for (let bi = bricks.length - 1; bi >= 0; bi--) {
-    const br = bricks[bi];
-    const rc = brickRect(br);
-    const cx = Math.max(rc.x, Math.min(b.x, rc.x + rc.w));
-    const cy = Math.max(rc.y, Math.min(b.y, rc.y + rc.h));
-    const dx = b.x - cx, dy = b.y - cy;
-    if (dx * dx + dy * dy > BALL_R * BALL_R) continue;
-    const px = (BALL_R + rc.w / 2) - Math.abs(b.x - (rc.x + rc.w / 2));
-    const py = (BALL_R + rc.h / 2) - Math.abs(b.y - (rc.y + rc.h / 2));
-    if (px < py) {
-      b.vx = -b.vx;
-      b.x += (b.x < rc.x + rc.w / 2 ? -px : px);
-    } else {
-      b.vy = -b.vy;
-      b.y += (b.y < rc.y + rc.h / 2 ? -py : py);
+/* 圆 vs 旋转鳞片（OBB）：反射 + 随机偏转；火球模式穿透 */
+function collideSegments(b) {
+  const fire = fireT > 0;
+  for (const s of bricks) {
+    const dx = b.x - s.x, dy = b.y - s.y;
+    const broad = BRICK_H * 1.6 + BALL_R;
+    if (dx * dx + dy * dy > broad * broad) continue;
+    const ca = Math.cos(-s.ang), sa = Math.sin(-s.ang);
+    const lx = dx * ca - dy * sa, ly = dx * sa + dy * ca;
+    const hw = (CELL - GAP) / 2, hh = BRICK_H / 2;
+    const cx = Math.max(-hw, Math.min(lx, hw));
+    const cy = Math.max(-hh, Math.min(ly, hh));
+    const ddx = lx - cx, ddy = ly - cy;
+    const d2 = ddx * ddx + ddy * ddy;
+    if (d2 > BALL_R * BALL_R) continue;
+
+    if (fire) {
+      if (s.cd > 0) continue;
+      s.cd = 0.18;
+      damageSegment(s, 3, false);
+      continue;                          // 火球穿透，不反弹
     }
-    const hx = Math.max(rc.x, Math.min(b.x, rc.x + rc.w));
-    const hy = Math.max(rc.y, Math.min(b.y, rc.y + rc.h));
-    if (br.hp <= 1) shatterBrick(br, false);
-    else hitBrick(br, hx, hy);
-    break;   // 一颗球一帧只撞一块
+    let nlx, nly;
+    if (d2 > 1e-6) {
+      const d = Math.sqrt(d2);
+      nlx = ddx / d; nly = ddy / d;
+    } else {
+      const px = hw - Math.abs(lx), py = hh - Math.abs(ly);
+      if (px < py) { nlx = lx < 0 ? -1 : 1; nly = 0; }
+      else { nlx = 0; nly = ly < 0 ? -1 : 1; }
+    }
+    const ca2 = Math.cos(s.ang), sa2 = Math.sin(s.ang);
+    const wnx = nlx * ca2 - nly * sa2;
+    const wny = nlx * sa2 + nly * ca2;
+    const dot = b.vx * wnx + b.vy * wny;
+    if (dot < 0) { b.vx -= 2 * dot * wnx; b.vy -= 2 * dot * wny; }
+    if (d2 > 1e-6) {
+      const push = BALL_R - Math.sqrt(d2) + 0.5;
+      b.x += wnx * push; b.y += wny * push;
+    }
+    // 球撞蛇身后随机偏转
+    const jitter = (Math.random() * 0.9 - 0.45);
+    const cs = Math.cos(jitter), sn = Math.sin(jitter);
+    const nvx = b.vx * cs - b.vy * sn;
+    const nvy = b.vx * sn + b.vy * cs;
+    b.vx = nvx; b.vy = nvy;
+
+    addSparks(b.x, b.y, 3, 'rgba(255,255,255,0.9)', 0.8);
+    damageSegment(s, 1, false);
+    break;
   }
 }
 
@@ -559,20 +612,41 @@ function update(rdt) {
   timeScale += ((slowmoT > 0 ? 0.3 : 1) - timeScale) * Math.min(1, rdt * 10);
   const dt = rdt * timeScale;
 
-  introT = Math.min(1, introT + rdt * 2.2);
-  // 压迫感：砖阵随时间缓慢下压，压到与弹板平行即失败
-  if (state === S_PLAY && introT >= 1) {
-    boardY += descendSpeed * dt;
-    let lowest = 0;
-    for (const b of bricks) {
-      const rc = brickRect(b);
-      lowest = Math.max(lowest, rc.y + rc.h);
-      if (rc.y + rc.h >= paddleY - 14) { doFail('crush'); break; }
+  introT = Math.min(1, introT + rdt * 2);
+  if (fireT > 0) fireT -= rdt;
+  if (laserT > 0) laserT -= rdt;
+  if (thunderT > 0) thunderT -= rdt;
+
+  // 长蛇游走：蛇头带路，蛇身跟随
+  if (state === S_PLAY && introT >= 0.3) {
+    snakeT -= dt;
+    if (snakeT <= 0) {
+      snakeT = levelData.turnT * (0.7 + Math.random() * 0.6);
+      turnVel = (Math.random() * 2 - 1) * 1.5;
     }
-    if (state === S_PLAY && lowest > paddleY - 160) {
-      warnBeepT -= rdt;
-      if (warnBeepT <= 0) { warnBeepT = 0.8; blip(880, 0.07, 'square', 0.07); blip(440, 0.12, 'square', 0.05); }
-    } else warnBeepT = 0;
+    heading += turnVel * dt;
+    head.x += Math.cos(heading) * levelData.snakeSpeed * dt;
+    head.y += Math.sin(heading) * levelData.snakeSpeed * dt;
+    const bx0 = offX + 34, bx1 = offX + playW - 34;
+    const by0 = TOP + 26, by1 = TOP + Math.min(210, H * 0.3);
+    if (head.x < bx0) { head.x = bx0; heading = Math.PI - heading; }
+    else if (head.x > bx1) { head.x = bx1; heading = Math.PI - heading; }
+    if (head.y < by0) { head.y = by0; heading = -heading; }
+    else if (head.y > by1) { head.y = by1; heading = -heading; }
+    if (head.y < by0 + 12 && Math.sin(heading) < 0) heading = -heading;
+    if (Math.abs(heading) < 0.25) heading = (heading < 0 ? -1 : 1) * 0.25; // 防贴边水平死走
+    for (let i = 0; i < bricks.length; i++) {
+      const s = bricks[i];
+      const px = i === 0 ? head.x : bricks[i - 1].x;
+      const py = i === 0 ? head.y : bricks[i - 1].y;
+      let dx = px - s.x, dy = py - s.y;
+      let d = Math.hypot(dx, dy);
+      if (d < 0.001) { dx = 1; dy = 0; d = 1; }
+      s.x += dx / d * (d - SEG_SPACING);
+      s.y += dy / d * (d - SEG_SPACING);
+      s.ang = Math.atan2(dy, dx);
+      s.cd = Math.max(0, s.cd - dt);
+    }
   }
 
   // 横板
@@ -582,6 +656,72 @@ function update(rdt) {
   paddleTarget = Math.max(offX + w / 2, Math.min(offX + playW - w / 2, paddleTarget));
   paddleX += (paddleTarget - paddleX) * Math.min(1, rdt * 18);
   paddlePunch = Math.max(0, paddlePunch - rdt * 6);
+
+  // 激光
+  if (state === S_PLAY && laserT > 0) {
+    laserCd -= rdt;
+    if (laserCd <= 0) {
+      laserCd = 0.3;
+      lasers.push({ x: paddleX - w * 0.32, y: paddleY - 10 });
+      lasers.push({ x: paddleX + w * 0.32, y: paddleY - 10 });
+      sfx.laser();
+    }
+  }
+  for (let i = lasers.length - 1; i >= 0; i--) {
+    const l = lasers[i];
+    l.y -= 950 * dt;
+    let hit = false;
+    for (const s of bricks) {
+      const dx = l.x - s.x, dy = l.y - s.y;
+      if (dx * dx + dy * dy < Math.pow(CELL * 0.42, 2)) {
+        damageSegment(s, 1, false);
+        addSparks(l.x, l.y, 4, '#4dabf7', 0.9);
+        hit = true; break;
+      }
+    }
+    if (hit || l.y < -20) lasers.splice(i, 1);
+  }
+  // 陨石
+  if (state === S_PLAY && meteorQueue > 0) {
+    meteorCd -= rdt;
+    if (meteorCd <= 0) {
+      meteorCd = 0.2;
+      meteorQueue--;
+      const target = bricks.length ? bricks[Math.floor(Math.random() * bricks.length)] : null;
+      meteors.push({
+        sx: offX + Math.random() * playW, sy: -30,
+        target, t: 0, dur: 0.5 + Math.random() * 0.25
+      });
+    }
+  }
+  for (let i = meteors.length - 1; i >= 0; i--) {
+    const m = meteors[i];
+    m.t += dt;
+    const k = Math.min(m.t / m.dur, 1);
+    const tx = m.target ? m.target.x : m.sx;
+    const ty = m.target ? m.target.y : H * 0.4;
+    m.x = m.sx + (tx - m.sx) * k;
+    m.y = m.sy + (ty - m.sy) * k - Math.sin(k * Math.PI) * 70;
+    particles.push({ type: 'spark', x: m.x, y: m.y, vx: 0, vy: 0, w: 3, h: 0, rot: 0, vr: 0, color: '#da77f2', life: 0.25, age: 0, grav: 0 });
+    if (k >= 1) {
+      meteors.splice(i, 1);
+      shake = Math.min(shake + 6, 14);
+      addSparks(m.x, m.y, 14, '#da77f2', 1.4);
+      addPopup(m.x, m.y - 20, '轰！', '#da77f2', 20);
+      sfx.meteor(); buzz(20);
+      if (m.target && bricks.includes(m.target)) damageSegment(m.target, 2, true);
+      for (const s of bricks) {
+        if (s === m.target) continue;
+        const dx = s.x - m.x, dy = s.y - m.y;
+        if (dx * dx + dy * dy < 100 * 100) damageSegment(s, 1, true);
+      }
+    }
+  }
+  // 闪电视觉
+  for (let i = bolts.length - 1; i >= 0; i--) {
+    bolts[i].age += rdt;
+    if (bolts[i].age >= bolts[i].life) bolts.splice(i, 1);
+  }
 
   // 弹球
   if (state === S_PLAY) {
@@ -594,10 +734,9 @@ function update(rdt) {
         b.y += b.vy * dt / steps;
         reflectWalls(b);
         hitPaddle(b);
-        collideBricks(b);
+        collideSegments(b);
         if (state !== S_PLAY) break;
       }
-      // 恒速 + 防水平死循环
       const s2 = baseSpeed();
       const sp = Math.hypot(b.vx, b.vy) || 1;
       b.vx = b.vx / sp * s2; b.vy = b.vy / sp * s2;
@@ -608,11 +747,14 @@ function update(rdt) {
       }
       b.trail.push({ x: b.x, y: b.y });
       if (b.trail.length > 9) b.trail.shift();
+      if (fireT > 0 && Math.random() < 0.3) {
+        particles.push({ type: 'spark', x: b.x, y: b.y, vx: 0, vy: -30, w: 2.5, h: 0, rot: 0, vr: 0, color: '#ff922b', life: 0.3, age: 0, grav: 0 });
+      }
       if (b.y - BALL_R > H + 20) balls.splice(i, 1);
     }
     if (state === S_PLAY && balls.length === 0 && introT >= 1) loseLife();
 
-    // 道具下落
+    // 技能胶囊下落
     for (let i = powerups.length - 1; i >= 0; i--) {
       const p = powerups[i];
       p.y += p.vy * dt; p.rot = Math.sin(p.y * 0.05) * 0.2;
@@ -624,7 +766,7 @@ function update(rdt) {
     }
   }
 
-  // 特效（真实时间驱动呼吸，世界时间驱动位移）
+  // 特效
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
     p.age += rdt;
@@ -646,17 +788,9 @@ function update(rdt) {
 
   if (state === S_OVER) {
     overT += rdt;
-    for (let i = schedShatters.length - 1; i >= 0; i--) {
-      schedShatters[i].t -= rdt;
-      if (schedShatters[i].t <= 0) {
-        shatterBrick(schedShatters[i].b, true);
-        schedShatters.splice(i, 1);
-      }
-    }
     if (overT > 1.05 && document.getElementById('overOv').classList.contains('hidden')) {
       document.getElementById('overStats').innerHTML =
-        '第 <b>' + level + '</b> 关 · 得分 <b>' + score + '</b><br>' +
-        (failReason === 'crush' ? '砖阵压到弹板了，来不及消完！' : '横板没接住，就差一点点！');
+        '第 <b>' + level + '</b> 关 · 得分 <b>' + score + '</b><br>横板没接住，就差一点点！';
       show('overOv');
     }
   }
@@ -673,28 +807,21 @@ function render() {
   ctx.fillRect(0, 0, W, H);
   ctx.save();
   if (shake > 0.2) ctx.translate((Math.random() * 2 - 1) * shake, (Math.random() * 2 - 1) * shake);
+  ctx.globalAlpha = introT;
   drawRails();
+  drawSnakeBody();
   drawBricks();
   drawPowerups();
+  drawLasers();
+  drawMeteors();
+  drawBolts();
   drawParticles();
   drawPaddle();
   drawBalls();
   drawPopups();
   drawHUD();
+  ctx.globalAlpha = 1;
   ctx.restore();
-  // 砖阵迫近：红色警报光
-  if (state === S_PLAY && introT >= 1) {
-    let lowest = 0;
-    for (const b of bricks) { const rc = brickRect(b); lowest = Math.max(lowest, rc.y + rc.h); }
-    if (lowest > paddleY - 160) {
-      const a = 0.10 + 0.08 * Math.sin(performance.now() / 120);
-      const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.72);
-      g.addColorStop(0, 'rgba(255,60,60,0)');
-      g.addColorStop(1, 'rgba(255,60,60,' + a + ')');
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, W, H);
-    }
-  }
   if (flash > 0.01) {
     ctx.fillStyle = 'rgba(' + flashColor + ',' + Math.min(flash, 0.6) + ')';
     ctx.fillRect(0, 0, W, H);
@@ -705,21 +832,30 @@ function drawRails() {
   ctx.fillRect(offX - 6, 0, 6, H);
   ctx.fillRect(offX + playW, 0, 6, H);
 }
+function drawSnakeBody() {
+  if (bricks.length < 2) return;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(60,70,130,0.55)';
+  ctx.lineWidth = BRICK_H * 0.92;
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(bricks[0].x, bricks[0].y);
+  for (let i = 1; i < bricks.length; i++) ctx.lineTo(bricks[i].x, bricks[i].y);
+  ctx.stroke();
+  ctx.restore();
+}
 function drawBricks() {
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  const tNow = performance.now() / 1000;
-  for (const b of bricks) {
-    const rc = brickRect(b);
-    const col = b.special ? ['#e599f7', '#7048e8'] : tierColor(b.hp);
+  const t = performance.now() / 1000;
+  for (let i = 0; i < bricks.length; i++) {
+    const b = bricks[i];
+    const col = tierColor(b.hp);
     const punch = 1 + b.punch * 0.08;
     ctx.save();
-    if (b.special) {
-      ctx.shadowColor = 'rgba(218,119,242,0.9)';
-      ctx.shadowBlur = 10 + 6 * Math.sin(tNow * 5);
-    }
-    ctx.translate(rc.x + rc.w / 2, rc.y + rc.h / 2);
+    ctx.translate(b.x, b.y);
+    ctx.rotate(b.ang);
     ctx.scale(punch, punch);
-    const w = rc.w, h = rc.h;
+    const w = CELL - GAP, h = BRICK_H;
     ctx.fillStyle = col[1];
     roundRect(-w / 2, -h / 2 + 3, w, h, 7); ctx.fill();
     const g = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
@@ -733,11 +869,21 @@ function drawBricks() {
       ctx.fillStyle = 'rgba(255,255,255,' + (b.flash * 0.75) + ')';
       roundRect(-w / 2, -h / 2, w, h - 2, 7); ctx.fill();
     }
+    if (i === 0) {           // 蛇头：发光 + 眼睛
+      ctx.shadowColor = 'rgba(255,255,255,0.8)';
+      ctx.shadowBlur = 8 + 5 * Math.sin(t * 6);
+      ctx.fillStyle = 'rgba(255,255,255,0.95)';
+      ctx.beginPath();
+      ctx.arc(-w * 0.18, -h * 0.28, 2.2, 0, TAU);
+      ctx.arc(w * 0.18, -h * 0.28, 2.2, 0, TAU);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
     ctx.fillStyle = '#fff';
     const fs = Math.round(h * 0.52 * (1 + b.punch * 0.35));
     ctx.font = '800 ' + fs + 'px system-ui, "PingFang SC", sans-serif';
     ctx.shadowColor = 'rgba(0,0,0,0.4)'; ctx.shadowBlur = 4; ctx.shadowOffsetY = 1;
-    ctx.fillText(b.special ? '0' : String(b.hp), 0, -1);
+    ctx.fillText(String(b.hp), 0, -1);
     ctx.restore();
   }
   ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
@@ -751,10 +897,10 @@ function drawPowerups() {
     ctx.save();
     ctx.translate(p.x, p.y);
     ctx.rotate(Math.sin(t * 4 + p.x) * 0.16);
-    ctx.fillStyle = 'rgba(0,0,0,0.3)';
-    roundRect(-w / 2, -h / 2 + 3, w, h, h / 2); ctx.fill();
+    ctx.shadowColor = def.color; ctx.shadowBlur = 10;
     ctx.fillStyle = def.color;
     roundRect(-w / 2, -h / 2, w, h, h / 2); ctx.fill();
+    ctx.shadowBlur = 0;
     ctx.fillStyle = 'rgba(255,255,255,0.3)';
     roundRect(-w / 2 + 3, -h / 2 + 2, w - 6, h * 0.4, h / 3); ctx.fill();
     ctx.fillStyle = '#fff';
@@ -763,6 +909,47 @@ function drawPowerups() {
     ctx.restore();
   }
 }
+function drawLasers() {
+  if (!lasers.length) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (const l of lasers) {
+    const g = ctx.createLinearGradient(l.x, l.y, l.x, l.y + 30);
+    g.addColorStop(0, 'rgba(180,225,255,0.95)');
+    g.addColorStop(1, 'rgba(77,171,247,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(l.x - 2, l.y - 30, 4, 30);
+  }
+  ctx.restore();
+}
+function drawMeteors() {
+  for (const m of meteors) {
+    const g = ctx.createRadialGradient(m.x, m.y, 1, m.x, m.y, 12);
+    g.addColorStop(0, '#fff');
+    g.addColorStop(0.4, '#da77f2');
+    g.addColorStop(1, 'rgba(218,119,242,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(m.x, m.y, 12, 0, TAU); ctx.fill();
+  }
+}
+function drawBolts() {
+  if (!bolts.length) return;
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (const b of bolts) {
+    const a = 1 - b.age / b.life;
+    ctx.strokeStyle = 'rgba(255,240,150,' + a + ')';
+    ctx.lineWidth = 3;
+    ctx.shadowColor = 'rgba(255,240,150,0.9)';
+    ctx.shadowBlur = 12;
+    ctx.beginPath();
+    ctx.moveTo(b.pts[0].x, b.pts[0].y);
+    for (let i = 1; i < b.pts.length; i++) ctx.lineTo(b.pts[i].x, b.pts[i].y);
+    ctx.stroke();
+  }
+  ctx.restore();
+  ctx.shadowBlur = 0;
+}
 function drawPaddle() {
   if (state === S_MENU) return;
   const w = paddleW(), h = 14;
@@ -770,20 +957,34 @@ function drawPaddle() {
   ctx.save();
   ctx.translate(paddleX, paddleY + h / 2);
   ctx.scale(1 + paddlePunch * 0.12, squash);
-  ctx.shadowColor = 'rgba(90,140,255,0.65)'; ctx.shadowBlur = 16;
+  if (laserT > 0) { ctx.shadowColor = 'rgba(77,171,247,0.8)'; ctx.shadowBlur = 14; }
   const g = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
   g.addColorStop(0, '#a5c8ff');
-  g.addColorStop(0.5, '#4c6ef5');
+  g.addColorStop(0.5, laserT > 0 ? '#4dabf7' : '#4c6ef5');
   g.addColorStop(1, '#364fc7');
   ctx.fillStyle = g;
   roundRect(-w / 2, -h / 2, w, h, h / 2); ctx.fill();
   ctx.shadowBlur = 0;
   ctx.fillStyle = 'rgba(255,255,255,0.5)';
   roundRect(-w / 2 + 5, -h / 2 + 2, w - 10, 4, 2); ctx.fill();
-  // 中心瞄准点
   ctx.fillStyle = 'rgba(255,255,255,0.85)';
   ctx.beginPath(); ctx.arc(0, 0, 2.5, 0, TAU); ctx.fill();
   ctx.restore();
+  if (fireT > 0) {
+    ctx.fillStyle = 'rgba(255,107,107,0.9)';
+    ctx.font = '700 14px system-ui, "PingFang SC", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('🔥 火球穿透 ' + Math.ceil(fireT) + 's', paddleX, paddleY + 26);
+  }
+  const tags = [];
+  if (laserT > 0) tags.push('⚡ 激光 ' + Math.ceil(laserT) + 's');
+  if (thunderT > 0) tags.push('🌩 天雷 ' + Math.ceil(thunderT) + 's');
+  if (tags.length) {
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.font = '600 12px system-ui, "PingFang SC", sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(tags.join(' · '), W - 16, H - 12);
+  }
 }
 function drawBalls() {
   ctx.save();
@@ -791,8 +992,10 @@ function drawBalls() {
   for (const b of balls) {
     for (let i = 1; i < b.trail.length; i++) {
       const a = i / b.trail.length;
-      ctx.strokeStyle = 'rgba(120,180,255,' + (a * 0.35) + ')';
-      ctx.lineWidth = BALL_R * 1.6 * a;
+      ctx.strokeStyle = fireT > 0
+        ? 'rgba(255,146,43,' + (a * 0.5) + ')'
+        : 'rgba(120,180,255,' + (a * 0.35) + ')';
+      ctx.lineWidth = BALL_R * 1.8 * a;
       ctx.lineCap = 'round';
       ctx.beginPath();
       ctx.moveTo(b.trail[i - 1].x, b.trail[i - 1].y);
@@ -802,13 +1005,12 @@ function drawBalls() {
   }
   ctx.restore();
   for (const b of balls) {
-    const g = ctx.createRadialGradient(b.x - BALL_R * 0.3, b.y - BALL_R * 0.3, BALL_R * 0.2, b.x, b.y, BALL_R);
-    g.addColorStop(0, '#fff');
-    g.addColorStop(1, '#74c0fc');
+    const g = ctx.createRadialGradient(b.x - BALL_R * 0.3, b.y - BALL_R * 0.3, BALL_R * 0.2, b.x, b.y, BALL_R * (fireT > 0 ? 1.5 : 1));
+    if (fireT > 0) { g.addColorStop(0, '#fff'); g.addColorStop(0.5, '#ff922b'); g.addColorStop(1, 'rgba(255,107,107,0)'); }
+    else { g.addColorStop(0, '#fff'); g.addColorStop(1, '#74c0fc'); }
     ctx.fillStyle = g;
-    ctx.beginPath(); ctx.arc(b.x, b.y, BALL_R, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(b.x, b.y, BALL_R * (fireT > 0 ? 1.5 : 1), 0, TAU); ctx.fill();
   }
-  // 待发射提示
   const stuck = balls.find(b => b.stuck);
   if (stuck && state === S_PLAY && introT >= 1) {
     const a = 0.4 + 0.25 * Math.sin(performance.now() / 240);
@@ -874,7 +1076,7 @@ function drawHUD() {
   ctx.textAlign = 'center';
   ctx.fillStyle = 'rgba(255,255,255,0.55)';
   ctx.font = '600 13px system-ui, "PingFang SC", sans-serif';
-  ctx.fillText('第 ' + level + ' 关', W / 2, 22);
+  ctx.fillText('第 ' + level + ' 关 · 蛇鳞 ×' + bricks.length, W / 2, 22);
   ctx.textAlign = 'right';
   ctx.fillStyle = 'rgba(255,255,255,0.55)';
   ctx.font = '600 13px system-ui, "PingFang SC", sans-serif';
@@ -961,14 +1163,20 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden && state === S_PLAY && !paused) { paused = true; show('pauseOv'); }
 });
 
-/* 调试接口（供自动化测试） */
+/* 调试接口（自动化测试用） */
 window.__bb = {
   startLevel,
   launch,
   paddleTo: px => { paddleTarget = px; },
   split: () => splitBalls(),
+  buff: t => {
+    if (t === 'fire') fireT = 8;
+    else if (t === 'laser') { laserT = 6; laserCd = 0; }
+    else if (t === 'thunder') thunderT = 8;
+    else if (t === 'meteor') rainMeteors();
+  },
   weaken: () => { bricks.forEach(b => { b.hp = 1; }); },
-  nuke: () => { bricks.slice().forEach(b => shatterBrick(b, false)); },
+  nuke: () => { bricks.slice().forEach(b => shatterSegment(b, true)); },
   dropAllButOne: () => {
     const keep = balls.find(b => !b.stuck);
     balls = keep ? [keep] : balls.slice(0, 1);
@@ -981,13 +1189,8 @@ window.__bb = {
   get brickCount() { return bricks.length; },
   get paddleX() { return paddleX; },
   get firstBallX() { const b = balls.find(x => !x.stuck); return b ? b.x : null; },
-  get ballSpeed() { return levelData ? levelData.ballSpeed : 0; },
-  get paddleFactor() { return levelData ? levelData.paddleFactor : 0; },
-  get descendSpeed() { return descendSpeed; },
-  get boardY() { return boardY; },
-  get powerupCount() { return powerups.length; },
-  specialPos: () => { const b = bricks.find(x => x.special); return b ? { c: b.c, r: b.r } : null; },
-  advanceBoard: px => { boardY += px; }
+  get snakeHead() { return { x: Math.round(head.x), y: Math.round(head.y) }; },
+  get powerupCount() { return powerups.length; }
 };
 refreshMenu();
 show('menuOv');

@@ -305,7 +305,7 @@ let bulletSpeedMul = 1;
 let keys = { left: false, right: false };
 let minGap = 0, initialGap = 1;
 // 三选一强化（参考打了个龙）：属性 + 副武器
-let upgradeOpen = false, upgradeCards = [];
+let upgradeOpen = false, upgradeCards = [], lastUpgradeAt = 0;
 let dmgMul = 1, rateMul = 1, extraBullets = 0, critChance = 0, pierceExtra = 0, thunderWeapon = false;
 let totalHp0 = 1;
 
@@ -364,7 +364,7 @@ function startLevel(n) {
   particles = []; popups = [];
   score = 0; shatterCount = 0; streak = 0; streakT = 0;
   dmgMul = 1; rateMul = 1; extraBullets = 0; critChance = 0; pierceExtra = 0; thunderWeapon = false;
-  upgradeOpen = false; upgradeCards = [];
+  upgradeOpen = false; upgradeCards = []; lastUpgradeAt = 0;
   totalHp0 = Math.max(1, bricks.reduce((a, b) => a + b.hp, 0));
   spreadT = 0; fireT = 0; pierceT = 0; homingT = 0; rapidT = 0; rainbowT = 0;
   bulletSpeedMul = 1;
@@ -501,8 +501,13 @@ function shatterSegment(s, chain) {
   const i = bricks.indexOf(s);
   if (i >= 0) bricks.splice(i, 1);
   shatterCount++;
-  if (shatterCount % 10 === 0 && !upgradeOpen && state === S_PLAY) openUpgrade();
   if (shatterCount % 7 === 0 || Math.random() < 0.08) dropPowerup(s.x, s.y);
+  // 三选一强化：等技能胶囊落地结算完毕后再弹，每 12 次碎鳞一次
+  if (!upgradeOpen && state === S_PLAY && shatterCount >= 12 &&
+      shatterCount - lastUpgradeAt >= 12 && powerups.length === 0) {
+    lastUpgradeAt = shatterCount;
+    openUpgrade();
+  }
   if (bricks.length === 0 && state === S_PLAY) doClear();
 }
 

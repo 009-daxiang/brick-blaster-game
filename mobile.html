@@ -66,7 +66,7 @@
   <button id="btnContinue">开始挑战</button>
   <button id="btnLevels" class="ghost">选 关</button>
   <button id="btnMute" class="ghost">🔊 音效：开</button>
-  <p class="hint">枪手自动开火，屏幕任意处左右滑动走位 · 子弹打中蛇身即消除<br>长蛇开局盘踞全场并持续下压，蛇身碰到枪手就失败了<br>定期三选一强化 + 炫彩技能：散射 / 火焰 / 穿透 / 追踪 / 速射 / 彩虹</p>
+  <p class="hint">枪手自动开火，屏幕任意处左右滑动走位<br>长蛇蜿蜒下压，蛇身碰到枪手就失败了<br>定期三选一强化 + 炫彩技能：散射 / 火焰 / 穿透 / 追踪 / 速射 / 彩虹</p>
   <p class="credit">蛇來了 · 素材：背景 CC0 · 音效 CC0 (Juhani Junkala / p0ss) · BGM "yewamb" CC-BY — opengameart.org</p>
 </div>
 
@@ -308,7 +308,7 @@ let bulletSpeedMul = 1;
 let keys = { left: false, right: false };
 let minGap = 0, initialGap = 1;
 // 三选一强化（参考打了个龙）：属性 + 副武器
-let upgradeOpen = false, upgradeCards = [];
+let upgradeOpen = false, upgradeCards = [], lastUpgradeAt = 0;
 let dmgMul = 1, rateMul = 1, extraBullets = 0, critChance = 0, pierceExtra = 0, thunderWeapon = false;
 let totalHp0 = 1;
 
@@ -367,7 +367,7 @@ function startLevel(n) {
   particles = []; popups = [];
   score = 0; shatterCount = 0; streak = 0; streakT = 0;
   dmgMul = 1; rateMul = 1; extraBullets = 0; critChance = 0; pierceExtra = 0; thunderWeapon = false;
-  upgradeOpen = false; upgradeCards = [];
+  upgradeOpen = false; upgradeCards = []; lastUpgradeAt = 0;
   totalHp0 = Math.max(1, bricks.reduce((a, b) => a + b.hp, 0));
   spreadT = 0; fireT = 0; pierceT = 0; homingT = 0; rapidT = 0; rainbowT = 0;
   bulletSpeedMul = 1;
@@ -504,8 +504,13 @@ function shatterSegment(s, chain) {
   const i = bricks.indexOf(s);
   if (i >= 0) bricks.splice(i, 1);
   shatterCount++;
-  if (shatterCount % 10 === 0 && !upgradeOpen && state === S_PLAY) openUpgrade();
   if (shatterCount % 7 === 0 || Math.random() < 0.08) dropPowerup(s.x, s.y);
+  // 三选一强化：等技能胶囊落地结算完毕后再弹，每 12 次碎鳞一次
+  if (!upgradeOpen && state === S_PLAY && shatterCount >= 12 &&
+      shatterCount - lastUpgradeAt >= 12 && powerups.length === 0) {
+    lastUpgradeAt = shatterCount;
+    openUpgrade();
+  }
   if (bricks.length === 0 && state === S_PLAY) doClear();
 }
 
@@ -1214,15 +1219,24 @@ function applyUpgrade(i) {
 
 /* ---------- 主循环 ---------- */
 let lastT = performance.now();
-function frame(now) {
-  requestAnimationFrame(frame);
+let lastRaF = performance.now();
+function tickFrame(now) {
   let rdt = (now - lastT) / 1000;
   lastT = now;
   rdt = Math.min(rdt, 0.05);
   if (!paused) update(rdt);
   render();
 }
+function frame(now) {
+  lastRaF = now;
+  tickFrame(now);
+  requestAnimationFrame(frame);
+}
 requestAnimationFrame(frame);
+// 遮挡冻结兜底：rAF 停摆超 120ms 时由定时器接管驱动
+setInterval(() => {
+  if (performance.now() - lastRaF > 120) tickFrame(performance.now());
+}, 40);
 
 /* ---------- UI ---------- */
 const OVS = ['menuOv', 'levelsOv', 'clearOv', 'overOv', 'pauseOv', 'upgradeOv'];
